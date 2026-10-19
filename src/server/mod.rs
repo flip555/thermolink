@@ -1,7 +1,7 @@
 //! HTTP surface. Deliberately imports `camera` and `render`, never a driver.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::camera::{Calibration, CameraDriver, CameraSpec, FramePayload, StreamKind, ThermalImage};
-use crate::render::{dt_jpeg, render_jpeg, DisplaySettings, PALETTES};
+use crate::render::{dt_jpeg, render_jpeg, DisplaySettings, IsoBand, PALETTES};
 use crate::stream::FrameHub;
 use crate::video::VideoTranscoder;
 
@@ -139,6 +139,10 @@ impl History {
         buf.push_back(sample);
     }
 
+    async fn clear(&self) {
+        self.buf.write().await.clear();
+    }
+
     async fn tail(&self, limit: usize) -> Vec<Sample> {
         let buf = self.buf.read().await;
         let skip = buf.len().saturating_sub(limit);
@@ -228,6 +232,15 @@ impl AppState {
             .ok()
             .and_then(|t| serde_json::from_str::<Vec<Reference>>(&t).ok())
             .unwrap_or_default();
+        let active_id = std::fs::read_to_string(data_dir.join("reference-active.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v["id"].as_str().map(str::to_string))
+            .filter(|id| references.iter().any(|r| &r.id == id));
+        let active_vals = active_id
+            .as_ref()
+            .and_then(|id| references.iter().find(|r| &r.id == id))
+            .map(|r| r.vals.clone());
         let mut token_bytes = [0u8; 8];
         let mut rng = OsRng;
         rng.fill_bytes(&mut token_bytes);
@@ -257,9 +270,9 @@ impl AppState {
             alarm_started: Mutex::new(HashMap::new()),
             alarm_active: Mutex::new(HashSet::new()),
             last_alarm: RwLock::new(None),
-            reference: RwLock::new(None),
+            reference: RwLock::new(active_vals),
             references: RwLock::new(references),
-            active_ref: RwLock::new(None),
+            active_ref: RwLock::new(active_id),
             prerecord: RwLock::new(prerecord),
             prerec_ring: Arc::new(Mutex::new(VecDeque::with_capacity(400))),
             active_clip: Arc::new(Mutex::new(None)),
@@ -317,6 +330,20 @@ impl AppState {
         let _ = std::fs::write(self.data_dir.join("references.json"), serde_json::to_vec_pretty(&list).unwrap_or_default());
     }
 
+    async fn persist_active_ref(&self) {
+        let id = self.active_ref.read().await.clone();
+        let path = self.data_dir.join("reference-active.json");
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        match id {
+            Some(id) => {
+                let _ = std::fs::write(path, serde_json::to_vec(&json!({ "id": id })).unwrap_or_default());
+            }
+            None => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
     async fn persist_prerecord(&self) {
         let c = self.prerecord.read().await.clone();
         let _ = std::fs::create_dir_all(&self.data_dir);
@@ -365,6 +392,7 @@ pub fn spawn_monitor(st: Arc<AppState>) {
                 })
                 .await;
             evaluate_alarms(&st, &stats).await;
+            append_region_log(&st, &img).await;
         }
     });
 }
@@ -585,7 +613,8 @@ async fn setup(
     if st.auth.read().await.is_some() {
         return Err((StatusCode::CONFLICT, "already set up".into()));
     }
-    let local = addr.ip().is_loopback();
+    let local = addr.ip().is_loopback()
+        || matches!(addr.ip(), IpAddr::V4(v4) if v4.is_private());
     let token_ok = headers
         .get("x-setup-token")
         .and_then(|v| v.to_str().ok())
@@ -731,16 +760,32 @@ async fn get_display(State(st): State<Arc<AppState>>) -> Json<DisplaySettings> {
     Json(st.display.read().await.clone())
 }
 
+#[derive(Deserialize)]
+struct DisplayPatch {
+    palette: Option<String>,
+    clip_lo: Option<Option<f32>>,
+    clip_hi: Option<Option<f32>>,
+    span_lo: Option<Option<f32>>,
+    span_hi: Option<Option<f32>>,
+    iso_bands: Option<Vec<IsoBand>>,
+}
+
 async fn set_display(
     State(st): State<Arc<AppState>>,
-    Json(next): Json<DisplaySettings>,
+    Json(patch): Json<DisplayPatch>,
 ) -> Result<Json<DisplaySettings>, (StatusCode, String)> {
-    if !PALETTES.contains(&next.palette.as_str()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("unknown palette {:?}", next.palette),
-        ));
+    let mut next = st.display.read().await.clone();
+    if let Some(palette) = patch.palette {
+        if !PALETTES.contains(&palette.as_str()) {
+            return Err((StatusCode::BAD_REQUEST, format!("unknown palette {palette:?}")));
+        }
+        next.palette = palette;
     }
+    if let Some(v) = patch.clip_lo { next.clip_lo = v; }
+    if let Some(v) = patch.clip_hi { next.clip_hi = v; }
+    if let Some(v) = patch.span_lo { next.span_lo = v; }
+    if let Some(v) = patch.span_hi { next.span_hi = v; }
+    if let Some(v) = patch.iso_bands { next.iso_bands = v; }
     *st.display.write().await = next.clone();
     st.persist_display().await;
     Ok(Json(next))
@@ -834,6 +879,10 @@ async fn raw_h264(State(st): State<Arc<AppState>>) -> Response {
 struct HistoryQuery {
     #[serde(default = "default_history_limit")]
     limit: usize,
+    #[serde(default)]
+    since: Option<u64>,
+    #[serde(default)]
+    clear: Option<bool>,
 }
 
 fn default_history_limit() -> usize {
@@ -844,7 +893,14 @@ async fn history_json(
     State(st): State<Arc<AppState>>,
     Query(q): Query<HistoryQuery>,
 ) -> Json<serde_json::Value> {
-    Json(json!({ "samples": st.history.tail(q.limit.min(3600)).await }))
+    if q.clear.unwrap_or(false) {
+        st.history.clear().await;
+    }
+    let mut samples = st.history.tail(q.limit.min(3600)).await;
+    if let Some(since) = q.since {
+        samples.retain(|s| s.t >= since);
+    }
+    Json(json!({ "samples": samples }))
 }
 
 #[derive(Deserialize)]
@@ -1074,6 +1130,7 @@ async fn add_reference(
     *st.reference.write().await = Some(vals);
     *st.active_ref.write().await = Some(id);
     st.persist_references().await;
+    st.persist_active_ref().await;
     Ok(Json(json!({ "ok": true, "id": reference.id })))
 }
 
@@ -1087,6 +1144,7 @@ async fn activate_reference(
     };
     *st.reference.write().await = Some(reference.vals);
     *st.active_ref.write().await = Some(reference.id);
+    st.persist_active_ref().await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1100,6 +1158,7 @@ async fn delete_reference(
         *st.active_ref.write().await = None;
     }
     st.persist_references().await;
+    st.persist_active_ref().await;
     Json(json!({ "ok": true }))
 }
 
@@ -1108,6 +1167,7 @@ async fn clear_references(State(st): State<Arc<AppState>>) -> Json<serde_json::V
     *st.reference.write().await = None;
     *st.active_ref.write().await = None;
     st.persist_references().await;
+    st.persist_active_ref().await;
     Json(json!({ "ok": true }))
 }
 
@@ -1182,11 +1242,15 @@ async fn set_reference(State(st): State<Arc<AppState>>) -> Result<Json<serde_jso
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
     let vals: Vec<u16> = img.values().collect();
     *st.reference.write().await = Some(vals);
+    *st.active_ref.write().await = None;
+    st.persist_active_ref().await;
     Ok(Json(json!({ "ok": true, "at": now_secs() })))
 }
 
 async fn clear_reference(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     *st.reference.write().await = None;
+    *st.active_ref.write().await = None;
+    st.persist_active_ref().await;
     Json(json!({ "ok": true }))
 }
 
@@ -1836,7 +1900,17 @@ async fn set_region_ref(
     Json(json!({ "ok": true }))
 }
 
-async fn regions_csv(State(st): State<Arc<AppState>>) -> Response {
+async fn regions_csv(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<CsvClear>,
+) -> Response {
+    let log = st.data_dir.join("regions.csv");
+    if q.clear.unwrap_or(false) {
+        let _ = std::fs::remove_file(&log);
+    }
+    if let Ok(body) = std::fs::read_to_string(&log) {
+        return text_response(body, "text/csv; charset=utf-8");
+    }
     let regions = st.regions.read().await.clone();
     let img = st.thermal_image().await;
     let mut stats: Vec<serde_json::Value> = img
@@ -1863,13 +1937,69 @@ async fn regions_csv(State(st): State<Arc<AppState>>) -> Response {
     text_response(out, "text/csv; charset=utf-8")
 }
 
-async fn history_csv(State(st): State<Arc<AppState>>) -> Response {
-    let samples = st.history.tail(3600).await;
+async fn history_csv(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
+    if q.clear.unwrap_or(false) {
+        st.history.clear().await;
+    }
+    let mut samples = st.history.tail(q.limit.min(3600)).await;
+    if let Some(since) = q.since {
+        samples.retain(|s| s.t >= since);
+    }
     let mut out = String::from("t,min_c,max_c,mean_c\n");
     for s in samples {
         out.push_str(&format!("{},{:.2},{:.2},{:.2}\n", s.t, s.min_c, s.max_c, s.mean_c));
     }
-    text_response(out, "text/csv; charset=utf-8")
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"temperature.csv\"")
+        .body(Body::from(out))
+        .unwrap()
+}
+
+async fn append_region_log(st: &Arc<AppState>, img: &ThermalImage) {
+    use std::io::Write;
+    let regions = st.regions.read().await.clone();
+    if regions.is_empty() {
+        return;
+    }
+    let mut stats: Vec<serde_json::Value> = regions.iter().filter_map(|r| region_stats(img, r)).collect();
+    attach_deltas(img, &regions, &mut stats);
+    let path = st.data_dir.join("regions.csv");
+    let fresh = !path.exists();
+    let mut out = String::new();
+    if fresh {
+        out.push_str("t,id,name,kind,n,min_c,avg_c,max_c,delta_c\n");
+    }
+    let t = now_secs();
+    for s in &stats {
+        out.push_str(&format!(
+            "{t},{},{},{},{},{:.2},{:.2},{:.2},{}\n",
+            s["id"].as_str().unwrap_or(""),
+            s["name"].as_str().unwrap_or("").replace(',', " "),
+            s["kind"].as_str().unwrap_or(""),
+            s["n"].as_u64().unwrap_or(0),
+            s["min_c"].as_f64().unwrap_or(0.0),
+            s["avg_c"].as_f64().unwrap_or(0.0),
+            s["max_c"].as_f64().unwrap_or(0.0),
+            s["delta_c"].as_f64().map(|v| format!("{v:.2}")).unwrap_or_default(),
+        ));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(out.as_bytes());
+    }
+    if std::fs::metadata(&path).map(|m| m.len() > 10 * 1024 * 1024).unwrap_or(false) {
+        let _ = std::fs::rename(&path, st.data_dir.join("regions.csv.1"));
+    }
+}
+
+#[derive(Deserialize)]
+struct CsvClear {
+    #[serde(default)]
+    clear: Option<bool>,
 }
 
 fn attach_deltas(img: &ThermalImage, regions: &[Region], stats: &mut [serde_json::Value]) {

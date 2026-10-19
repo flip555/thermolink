@@ -302,6 +302,7 @@
     <div class="hint" id="authHint"></div>
     <label class="f">Username <input id="authUser" autocomplete="username" required></label>
     <label class="f">Password <input id="authPass" type="password" autocomplete="current-password" required></label>
+    <label class="f" id="authTokenRow" style="display:none">Setup token <input id="authToken" placeholder="only if remote setup is refused"></label>
     <div class="err" id="authErr"></div>
     <button class="primary" type="submit" id="authSubmit">Sign in</button>
   </form>
@@ -343,6 +344,7 @@ async function initAuth() {
       $("authHint").textContent = "First run: set the admin username and password (6+ characters).";
       $("authSubmit").textContent = "Create account";
       $("authPass").autocomplete = "new-password";
+      $("authTokenRow").style.display = "";
       $("auth").classList.add("show");
       return;
     }
@@ -350,6 +352,7 @@ async function initAuth() {
     $("authTitle").textContent = "Sign in";
     $("authHint").textContent = "Enter your credentials.";
     $("authSubmit").textContent = "Sign in";
+    $("authTokenRow").style.display = "none";
     $("auth").classList.add("show");
   } catch (e) {
     $("authErr").textContent = "server unreachable";
@@ -360,7 +363,9 @@ $("authForm").onsubmit = async (e) => {
   e.preventDefault();
   const body = { username: $("authUser").value, password: $("authPass").value };
   const url = authMode === "setup" ? "/api/setup" : "/api/login";
-  const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const headers = { "Content-Type": "application/json" };
+  if (authMode === "setup" && $("authToken").value.trim()) headers["X-Setup-Token"] = $("authToken").value.trim();
+  const r = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
   if (r.ok) location.reload();
   else $("authErr").textContent = await r.text();
 };
@@ -866,7 +871,10 @@ async function poll() {
     $("link").innerHTML=connected?'<span class="ok">connected</span>':'<span class="err">offline</span>';
     $("vlink").innerHTML=d.video?'<span class="ok">transcoding</span>':'<span class="warn">unavailable</span>';
     if (d.palettes) paintPalettes(d.palettes,(d.display||{}).palette);
-    if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized=true; }
+    if (d.display) {
+      const sig = JSON.stringify(d.display);
+      if (sig !== state.displaySig) { state.displaySig = sig; fillDisplay(d.display); }
+    }
     if (d.calibration && document.activeElement!==$("calScale")) { $("calScale").value=d.calibration.scale; $("calOffset").value=d.calibration.offset; }
     if (d.align) applyAlign(d.align);
     if (d.has_reference === false) {
