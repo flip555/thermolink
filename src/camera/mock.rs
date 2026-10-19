@@ -34,6 +34,9 @@ impl MockDriver {
                 driver: "mock",
                 model: "Simulated 160x120 thermal source",
                 video: None,
+                capabilities: super::Capabilities {
+                    thermal: true, ..Default::default()
+                },
                 thermal: Some(ThermalStream {
                     width: WIDTH,
                     height: HEIGHT,

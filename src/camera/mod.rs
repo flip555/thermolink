@@ -99,6 +99,18 @@ pub struct ThermalStream {
     pub calibration: Calibration,
 }
 
+/// Static facts a driver advertises; the UI hides controls from this.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Capabilities {
+    pub thermal: bool,
+    pub visible: bool,
+    pub discover: bool,
+    pub network_settings: bool,
+    pub reboot: bool,
+    #[serde(default)]
+    pub controls: Vec<String>,
+}
+
 /// What a driver can produce. The web UI builds itself from this.
 #[derive(Debug, Clone, Serialize)]
 pub struct CameraSpec {
@@ -106,6 +118,8 @@ pub struct CameraSpec {
     pub model: &'static str,
     pub video: Option<VideoStream>,
     pub thermal: Option<ThermalStream>,
+    #[serde(default)]
+    pub capabilities: Capabilities,
 }
 
 /// One radiometric image, already extracted from the vendor wrapper.

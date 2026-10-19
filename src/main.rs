@@ -177,6 +177,13 @@ async fn serve(
     data_dir: PathBuf,
 ) -> Result<()> {
     insert_crypto_provider();
+    let saved: Option<thermolink::config::CameraConfig> = std::fs::read_to_string(data_dir.join("camera.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+    let (driver, host, control_port, media_port) = match saved {
+        Some(c) => (c.driver, c.host, c.control_port, c.media_port),
+        None => (driver, host, control_port, media_port),
+    };
     let driver = if demo { "mock".to_string() } else { driver };
     let cfg = camera_config(driver, host, control_port, media_port);
     let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);

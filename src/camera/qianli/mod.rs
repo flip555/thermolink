@@ -87,6 +87,11 @@ impl QianliDriver {
                 codec: "h264-annexb",
                 fps_hint: 30.0,
             }),
+            capabilities: super::Capabilities {
+                thermal: true, visible: true, discover: true,
+                network_settings: true, reboot: true,
+                controls: vec!["network".to_string()],
+            },
             thermal: Some(ThermalStream {
                 width: WIDTH,
                 height: HEIGHT,

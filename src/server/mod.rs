@@ -660,6 +660,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/", get(index))
         .route("/i18n/{file}", get(i18n_file))
         .route("/api/spec", get(spec))
+        .route("/api/drivers", get(drivers))
+        .route("/api/camera/select", post(select_camera))
         .route("/api/health", get(health))
         .route("/api/thermal.json", get(thermal_json))
         .route("/api/thermal.jpg", get(thermal_jpg))
@@ -1194,6 +1196,52 @@ async fn i18n_file(AxumPath(file): AxumPath<String>) -> Response {
             .into_response(),
         None => (StatusCode::NOT_FOUND, "unknown language").into_response(),
     }
+}
+
+async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut list = Vec::new();
+    for id in crate::camera::registry::KNOWN {
+        let cfg = crate::config::CameraConfig {
+            driver: id.to_string(),
+            host: st.camera_host.clone(),
+            ..Default::default()
+        };
+        if let Ok(d) = crate::camera::registry::build(&cfg) {
+            let s = d.spec();
+            list.push(json!({ "id": id, "model": s.model, "capabilities": s.capabilities }));
+        }
+    }
+    Json(json!({ "drivers": list, "current": st.driver.id() }))
+}
+
+#[derive(Deserialize)]
+struct SelectCamera {
+    driver: String,
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    control_port: Option<u16>,
+    #[serde(default)]
+    media_port: Option<u16>,
+}
+
+async fn select_camera(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<SelectCamera>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !crate::camera::registry::KNOWN.contains(&req.driver.as_str()) {
+        return Err((StatusCode::BAD_REQUEST, "unknown driver".into()));
+    }
+    let cfg = json!({
+        "driver": req.driver,
+        "host": req.host.unwrap_or_else(|| st.camera_host.clone()),
+        "control_port": req.control_port.unwrap_or(3001),
+        "media_port": req.media_port.unwrap_or(3000),
+    });
+    write_atomic(&st.data_dir, "camera.json", &serde_json::to_vec(&cfg).unwrap_or_default())
+        .await
+        .map_err(persist_error)?;
+    Ok(Json(json!({ "ok": true, "restart_required": true })))
 }
 
 async fn spec(State(st): State<Arc<AppState>>) -> Json<CameraSpec> {

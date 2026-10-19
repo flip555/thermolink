@@ -316,6 +316,9 @@
         <span data-i18n="label.video">Video</span><span id="vlink">–</span>
         <span data-i18n="label.version">Version</span><span id="ver">–</span>
       </div>
+      <h2>Driver</h2>
+      <div class="row"><select id="driverSel" style="flex:1"></select><button id="driverApply">Use driver</button></div>
+      <div class="hint" id="driverState"></div>
       <h2 class="admin-only" data-i18n="panel.relay">Relay</h2>
       <div class="admin-only">
         <div class="kv">
@@ -331,13 +334,15 @@
         <div class="hint" id="updNotes" style="white-space:pre-wrap"></div>
         <div class="hint" data-i18n="hint.updateNote">Installing replaces the binary on disk; the running build keeps serving until you restart. A restart signs everyone in again.</div>
       </div>
+      <div id="discoveryBlock">
       <h2 data-i18n="panel.discovery">Discovery</h2>
       <div class="row"><button id="discover" data-i18n="btn.discover">Discover cameras</button></div>
       <div class="kv" id="discovered" style="margin-top:8px"><span>—</span><span data-i18n="label.notScanned">not scanned</span></div>
+      </div>
       <h2 data-i18n="panel.cameraSettings">Camera settings</h2>
       <div class="row"><button id="camRead" data-i18n="btn.readCamera">Read from camera</button></div>
       <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span data-i18n="label.notRead">not read</span></div>
-      <div class="admin-only">
+      <div class="admin-only" id="netSettingsBlock">
         <label class="f"><span data-i18n="label.ip">IP address</span> <input id="camIp" placeholder="192.168.1.85"></label>
         <label class="f"><span data-i18n="label.netmask">Netmask</span> <input id="camMask" placeholder="255.255.255.0"></label>
         <label class="f"><span data-i18n="label.gateway">Gateway</span> <input id="camGw" placeholder="192.168.1.1"></label>
@@ -471,7 +476,7 @@ function initLangPicker() {
 
 const state = {
   unit: saved("unit", "C"), display: null, initialized: false, palettes: [],
-  mode: saved("mode", "thermal"), codecActive: false, anchor: saved("anchor", "left"),
+  mode: saved("mode", "thermal"), codecActive: false, caps: null, anchor: saved("anchor", "left"),
   split: Number(saved("split", "50")), dt: saved("dt", "0") === "1",
   w: 160, h: 120, regions: [], alarms: [], history: [], lastAlarm: null, dismissed: null,
   polyMode: false, polyPts: [], drawMode: "none", peaks: [], peaksSig: "", pipSize: "medium", chartWin: 60, feedStarted: false, visStarted: false,
@@ -638,6 +643,21 @@ function fitViewer() {
   v.style.height = Math.floor(h) + "px";
 }
 
+function applyCapabilities(caps) {
+  if (!caps) return;
+  state.caps = caps;
+  const hasVisible = !!caps.visible;
+  for (const b of $("modes").children) {
+    const m = b.dataset.mode;
+    b.style.display = (!hasVisible && ["visible","wipe","pip","fusion"].includes(m)) ? "none" : "";
+  }
+  if (!hasVisible && ["visible","wipe","pip","fusion"].includes(state.mode)) setMode("thermal", false);
+  const set = (id, on) => { const el = $(id); if (el) el.style.display = on ? "" : "none"; };
+  set("discoveryBlock", !!caps.discover);
+  set("netSettingsBlock", !!caps.network_settings);
+  set("camReboot", !!caps.reboot);
+}
+
 function syncPaletteVisibility(palette) {
   const isIso = ((palette || (state.display && state.display.palette) || "rainbow") === "isotherm");
   for (const el of document.querySelectorAll("[data-palette]")) {
@@ -673,6 +693,18 @@ function setMode(mode, persist = true) {
 }
 for (const b of $("modes").children) b.onclick = () => setMode(b.dataset.mode);
 
+async function loadDrivers() {
+  try {
+    const d = await (await fetch("/api/drivers")).json();
+    $("driverSel").innerHTML = (d.drivers || []).map(x =>
+      `<option value="${x.id}" ${x.id===d.current?"selected":""}>${x.id} — ${x.model||""}</option>`).join("");
+  } catch(e) {}
+}
+$("driverApply").onclick = async () => {
+  const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ driver: $("driverSel").value }) });
+  $("driverState").textContent = r.ok ? "saved — restart to apply" : "error: " + await r.text();
+};
+
 function setTab(name, persist = true) {
   if (persist) save("tab", name);
   for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.tab === name);
@@ -680,6 +712,7 @@ function setTab(name, persist = true) {
   if (name === "measure") loadRegions();
   if (name === "alarms") { loadAlarms(); loadNotify(); loadEvents(); }
   if (name === "capture") { listSnaps(); loadPrerecord(); loadReferences(); }
+  if (name === "camera") loadDrivers();
 }
 for (const b of $("tabs").children) b.onclick = () => setTab(b.dataset.tab);
 
@@ -1395,6 +1428,7 @@ async function poll() {
       const t=d.spec.thermal;
       $("res").textContent=t?`${t.width}×${t.height} · ${t.bit_depth}-bit`:"none";
       if (t && (state.w !== t.width || state.h !== t.height)) { state.w=t.width; state.h=t.height; fitViewer(); }
+      if (d.spec.capabilities) applyCapabilities(d.spec.capabilities);
     }
     $("seq").textContent=d.seq??"–";
     $("link").innerHTML=connected?'<span class="ok">connected</span>':'<span class="err">offline</span>';
