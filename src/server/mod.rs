@@ -1241,7 +1241,14 @@ async fn select_camera(
     write_atomic(&st.data_dir, "camera.json", &serde_json::to_vec(&cfg).unwrap_or_default())
         .await
         .map_err(persist_error)?;
-    Ok(Json(json!({ "ok": true, "restart_required": true })))
+    let exe = st.exe.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        if let Err(e) = crate::update::restart(&exe) {
+            tracing::error!(error = %e, "driver switch restart failed");
+        }
+    });
+    Ok(Json(json!({ "ok": true, "restarting": true })))
 }
 
 async fn spec(State(st): State<Arc<AppState>>) -> Json<CameraSpec> {

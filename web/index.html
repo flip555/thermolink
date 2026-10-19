@@ -702,7 +702,12 @@ async function loadDrivers() {
 }
 $("driverApply").onclick = async () => {
   const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ driver: $("driverSel").value }) });
-  $("driverState").textContent = r.ok ? "saved — restart to apply" : "error: " + await r.text();
+  if (r.ok) {
+    $("driverState").textContent = "restarting…";
+    setTimeout(() => location.reload(), 3500);
+  } else {
+    $("driverState").textContent = "error: " + await r.text();
+  }
 };
 
 function setTab(name, persist = true) {
