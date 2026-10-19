@@ -101,14 +101,17 @@ followed by a fixed **376-byte** structure.
 | 276 | 100 | build date |
 
 Write ritual: plain probe → write-mode probe → 376 bytes → `6a` COMMIT, which
-the camera echoes. The camera reboots to apply a network change (~2 min).
+the camera echoes. The camera stores the block immediately and reports it on
+the next read; the network change reaches the wire after a reboot (~2 min).
+`ThermoLink` implements exactly this sequence and reads the block back from a
+fresh connection before declaring the write applied.
 
 ## Known gaps
 
-* The vendor app's write session sends two `6c` probes, a `d7` probe and an
-  8-byte `0100000002000000` select before writing; our shorter sequence stores
-  the configuration but does not restart the camera. Porting the full sequence
-  is the next thing to try.
+* The vendor app's write session also sends two `6c` probes, a `d7` probe and
+  an 8-byte `0100000002000000` select before writing. Replaying those extras
+  made the camera store nothing, so the shorter sequence above is used. It
+  stores the block; the camera still needs a reboot to apply it.
 * Temperature offset is unverified; calibrate against a reference.
 * The camera runs a Telnet server on port 23 with `root` and a blank password.
   That is a real exposure — restrict the port or set a password.

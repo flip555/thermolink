@@ -12,6 +12,7 @@ pub mod handshake;
 pub mod protocol;
 pub mod reboot;
 pub mod settings;
+mod settings_write;
 pub mod thermal;
 
 use std::collections::HashMap;
@@ -153,6 +154,14 @@ impl CameraDriver for QianliDriver {
             .await
             .as_ref()
             .map(|(_, v)| v.clone()))
+    }
+
+    async fn write_settings(&self, changes: serde_json::Value) -> Result<serde_json::Value> {
+        let map = changes
+            .as_object()
+            .cloned()
+            .context("settings changes must be an object")?;
+        settings_write::write(self.host, self.control_port, &map).await
     }
 
     async fn open(&self) -> Result<Box<dyn CameraSession>> {

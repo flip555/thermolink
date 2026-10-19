@@ -16,6 +16,20 @@ pub mod registry;
 
 pub type Result<T> = anyhow::Result<T>;
 
+/// Strict dotted-quad IPv4 check, matching the vendor app's parser: four
+/// decimal parts, each 0-255, with no empty parts and no leading zeros.
+pub fn validate_ipv4(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('.').collect();
+    parts.len() == 4
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.len() <= 3
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && (p == &"0" || !p.starts_with('0'))
+                && p.parse::<u16>().is_ok_and(|v| v <= 255)
+        })
+}
+
 /// Which logical stream a frame belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -271,6 +285,12 @@ pub trait CameraDriver: Send + Sync {
     /// Restart the camera so stored settings take effect.
     async fn reboot(&self) -> Result<serde_json::Value> {
         anyhow::bail!("reboot is not supported by this driver")
+    }
+
+    /// Rewrite the camera's own network block. The caller supplies validated
+    /// string fields; every other byte of the block is preserved.
+    async fn write_settings(&self, _changes: serde_json::Value) -> Result<serde_json::Value> {
+        anyhow::bail!("network settings are not supported by this driver")
     }
 }
 

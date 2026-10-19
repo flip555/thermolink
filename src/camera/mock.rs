@@ -61,6 +61,18 @@ impl CameraDriver for MockDriver {
             n: 0,
         }))
     }
+
+    async fn write_settings(
+        &self,
+        changes: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "ok": true,
+            "applied": true,
+            "requested": changes.get("ip").cloned().unwrap_or(serde_json::Value::Null),
+            "note": "simulated camera: settings accepted",
+        }))
+    }
 }
 
 struct MockSession {

@@ -11,6 +11,29 @@ pub const SERIAL: &[u8; 6] = b"888888";
 pub const PAD: u8 = 0xcc;
 pub const DEFAULT_SID: [u8; 4] = [0x21, 0xd3, 0x6c, 0x87];
 
+/// Captured vendor write-mode probe: `0x6c` with the write flag set.
+const WRITE_MODE_HEX: &str = "78b63a12766964656f20736572766572000000000000000000000000383838383838000000000000000000000000000038383838383800000000000000000000000000006c00010000000000000000007801000021d36c87";
+/// Captured `6a` COMMIT packet. The vendor capture is 87 bytes (one short of
+/// the usual 88); it is sent verbatim because that is what the camera acks.
+const COMMIT_HEX: &str = "78b63a12766964656f20736572766572000000000000000000000000383838383838000000000000000000000000000038383838383800000000000000000000000000006a000000000000000000000000000021d36c87";
+
+/// Enter the camera's settings write mode.
+pub fn write_mode() -> Vec<u8> {
+    decode_hex(WRITE_MODE_HEX)
+}
+
+/// Commit the preceding 376-byte settings block.
+pub fn commit() -> Vec<u8> {
+    decode_hex(COMMIT_HEX)
+}
+
+fn decode_hex(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("static hex"))
+        .collect()
+}
+
 /// 88-byte registration packet used on the control port.
 ///
 /// `cmd` values seen live: `0x65`/`0x66` for client registration and `0x78`
@@ -165,6 +188,19 @@ mod tests {
     fn ctrl_matches_capture() {
         let expected = hex("030000000400000035000000b80b0000");
         assert_eq!(ctrl(4, [0x35, 0, 0, 0], 3000), expected);
+    }
+
+    #[test]
+    fn write_packets_match_capture() {
+        let mode = write_mode();
+        assert_eq!(mode.len(), 88);
+        assert_eq!(&mode[68..72], &[0x6c, 0x00, 0x01, 0x00]);
+        assert_eq!(mode, hex(WRITE_MODE_HEX));
+
+        let commit = commit();
+        assert_eq!(commit.len(), 87);
+        assert_eq!(&commit[68..70], &[0x6a, 0x00]);
+        assert_eq!(commit, hex(COMMIT_HEX));
     }
 
     fn hex(s: &str) -> Vec<u8> {

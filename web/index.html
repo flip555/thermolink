@@ -303,6 +303,14 @@
       <h2>Camera settings</h2>
       <div class="row"><button id="camRead">Read from camera</button></div>
       <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span>not read</span></div>
+      <div class="admin-only">
+        <label class="f">IP address <input id="camIp" placeholder="192.168.1.85"></label>
+        <label class="f">Netmask <input id="camMask" placeholder="255.255.255.0"></label>
+        <label class="f">Gateway <input id="camGw" placeholder="192.168.1.1"></label>
+        <label class="f">DNS <input id="camDns" placeholder="192.168.1.1"></label>
+        <div class="row" style="margin-top:8px"><button id="camSave">Save to camera</button></div>
+        <div class="hint">Writes the camera's own network block. A network change only takes hold after a reboot.</div>
+      </div>
       <div class="row" style="margin-top:8px"><button id="camReboot" class="admin-only">Reboot camera</button></div>
       <h2>Calibration</h2>
       <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
@@ -921,7 +929,25 @@ $("camRead").onclick = async () => {
   const r = await fetch("/api/camera/settings");
   if (!r.ok) { $("camSettings").innerHTML = `<span>Error</span><span>${await r.text()}</span>`; return; }
   const d = await r.json();
-  $("camSettings").innerHTML = Object.entries(d).map(([k,v]) => `<span>${k}</span><span>${v}</span>`).join("");
+  const fields = ["name","ip","mask","gw","dns","firmware","date"];
+  $("camSettings").innerHTML = fields.filter(k => d[k] !== undefined)
+    .map(k => `<span>${k}</span><span>${d[k]}</span>`).join("");
+  for (const [key, id] of [["ip","camIp"],["mask","camMask"],["gw","camGw"],["dns","camDns"]])
+    $(id).value = d[key] || "";
+};
+$("camSave").onclick = async () => {
+  const body = {
+    ip: $("camIp").value.trim(),
+    mask: $("camMask").value.trim(),
+    gw: $("camGw").value.trim(),
+    dns: $("camDns").value.trim(),
+  };
+  if (!confirm("Write these network settings to the camera? A network change only takes hold after a reboot.")) return;
+  const r = await fetch("/api/camera/settings", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  const now = d.now && typeof d.now === "object" ? d.now.ip : d.now;
+  $("camSettings").innerHTML = `<span>${r.ok ? "Saved" : "Not applied"}</span><span>${now || d.error || r.status}</span>`;
+  if (!r.ok) alert("Camera settings: " + (d.error || d.detail || r.status));
 };
 
 // ---------- named references ----------

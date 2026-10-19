@@ -662,7 +662,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/captures", get(list_captures))
         .route("/api/captures/{name}", get(capture_file))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
-        .route("/api/camera/settings", get(camera_settings))
+        .route(
+            "/api/camera/settings",
+            get(camera_settings).post(camera_settings_write),
+        )
         .route("/api/camera/reboot", post(camera_reboot))
         .route("/api/discover", get(discover))
         .route("/api/snapshot", post(snapshot))
@@ -2121,6 +2124,65 @@ async fn camera_settings(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CameraSettingsRequest {
+    ip: Option<String>,
+    mask: Option<String>,
+    gw: Option<String>,
+    dns: Option<String>,
+}
+
+async fn camera_settings_write(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<CameraSettingsRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let mut changes = serde_json::Map::new();
+    for (key, value) in [
+        ("ip", req.ip),
+        ("mask", req.mask),
+        ("gw", req.gw),
+        ("dns", req.dns),
+    ] {
+        let Some(value) = value else { continue };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if !crate::camera::validate_ipv4(value) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("{key} is not a valid IPv4 address"),
+            ));
+        }
+        changes.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    }
+    if changes.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "supply at least one of ip, mask, gw or dns".into(),
+        ));
+    }
+
+    let out = st
+        .driver
+        .write_settings(serde_json::Value::Object(changes))
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let applied = out
+        .get("applied")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    Ok((
+        if applied {
+            StatusCode::OK
+        } else {
+            StatusCode::BAD_GATEWAY
+        },
+        Json(out),
+    ))
+}
+
 async fn get_calibration(State(st): State<Arc<AppState>>) -> Json<Calibration> {
     Json(*st.calibration.read().await)
 }
@@ -3072,6 +3134,10 @@ mod tests {
         assert_eq!(guard_for(&Method::GET, "/api/notify", None), Guard::Admin);
         assert_eq!(
             guard_for(&Method::POST, "/api/camera/reboot", None),
+            Guard::Admin
+        );
+        assert_eq!(
+            guard_for(&Method::POST, "/api/camera/settings", None),
             Guard::Admin
         );
         assert_eq!(

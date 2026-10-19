@@ -33,7 +33,7 @@ pub fn parse(blob: &[u8]) -> Option<Value> {
     Some(Value::Object(out))
 }
 
-fn find_block(blob: &[u8]) -> Option<(usize, &[u8])> {
+pub(super) fn find_block(blob: &[u8]) -> Option<(usize, &[u8])> {
     // The documented layout first: an 88-byte echo, or a bare block.
     for offset in [ECHO_LEN, 0] {
         if let Some(block) = block_at(blob, offset) {
@@ -83,6 +83,35 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).trim().to_string()
 }
 
+/// Copy a block with the named string fields replaced. Everything opaque —
+/// MAC tail, ports, firmware, flags — is preserved byte-for-byte.
+pub fn set_fields(
+    block: &[u8],
+    changes: &serde_json::Map<String, Value>,
+) -> Result<Vec<u8>, String> {
+    let mut out = vec![0u8; BLOCK_LEN];
+    let copied = block.len().min(BLOCK_LEN);
+    out[..copied].copy_from_slice(&block[..copied]);
+    for (key, value) in changes {
+        let Some(&(_, off, size)) = FIELDS.iter().find(|(name, _, _)| name == key) else {
+            return Err(format!("unknown settings field {key}"));
+        };
+        let text = value
+            .as_str()
+            .ok_or_else(|| format!("{key} must be a string"))?
+            .trim();
+        if text.is_empty() {
+            return Err(format!("{key} must not be empty"));
+        }
+        if !text.is_ascii() || text.len() >= size {
+            return Err(format!("{key} must be ASCII and shorter than {size} bytes"));
+        }
+        out[off..off + size].fill(0);
+        out[off..off + text.len()].copy_from_slice(text.as_bytes());
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +131,45 @@ mod tests {
     #[test]
     fn rejects_garbage() {
         assert!(parse(&[0u8; 600]).is_none());
+    }
+
+    #[test]
+    fn set_fields_preserves_opaque_bytes() {
+        let mut block = vec![0u8; BLOCK_LEN];
+        block[0..8].copy_from_slice(b"SuperCam");
+        block[24..36].copy_from_slice(b"192.168.1.85");
+        block[104..112].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut changes = serde_json::Map::new();
+        changes.insert("ip".into(), json!("10.0.0.5"));
+        changes.insert("gw".into(), json!("10.0.0.1"));
+
+        let out = set_fields(&block, &changes).expect("rewrite");
+        assert_eq!(&out[104..112], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&out[24..32], b"10.0.0.5");
+        assert_eq!(out[32], 0, "short values are NUL padded");
+        assert_eq!(&out[56..64], b"10.0.0.1");
+        assert_eq!(&out[0..8], b"SuperCam");
+    }
+
+    #[test]
+    fn set_fields_rejects_unknown_and_oversized() {
+        let block = vec![0u8; BLOCK_LEN];
+        let mut changes = serde_json::Map::new();
+        changes.insert("mac".into(), json!("aa:bb"));
+        assert!(set_fields(&block, &changes).is_err());
+
+        let mut changes = serde_json::Map::new();
+        changes.insert("ip".into(), json!("1234567890123456"));
+        assert!(set_fields(&block, &changes).is_err());
+    }
+
+    #[test]
+    fn ipv4_validation_matches_the_vendor_parser() {
+        for good in ["192.168.1.85", "0.0.0.0", "255.255.255.255", "10.0.0.1"] {
+            assert!(crate::camera::validate_ipv4(good), "{good}");
+        }
+        for bad in ["", "192.168.1", "192.168.1.256", "192.168.01.1", "a.b.c.d", "1.2.3.4.5"] {
+            assert!(!crate::camera::validate_ipv4(bad), "{bad}");
+        }
     }
 }
