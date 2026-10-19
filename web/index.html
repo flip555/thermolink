@@ -1267,6 +1267,8 @@ const vctx = vcanvas ? vcanvas.getContext("2d") : null;
 let vcOn=false, vcDecoder=null, vcFallback=false, vcLastFrame=0, vcReader=null, vcStart=0, vcBackoff=1;
 function mjpegFallback(reason) {
   if (vcFallback) return;
+  $("vlink").innerHTML = '<span class="warn">MJPEG</span>';
+  $("vlink").title = reason || "MJPEG fallback";
   vcFallback=true; vcOn=false; state.codecActive=false; state.visStarted=false;
   try { if (vcDecoder) vcDecoder.close(); } catch(e) {}
   try { if (vcReader) vcReader.cancel(); } catch(e) {}
@@ -1278,6 +1280,7 @@ function mjpegFallback(reason) {
 }
 function startVisibleCodec() {
   if (!vcanvas || !vctx) return;
+  $("vlink").innerHTML = '<span class="warn">codec…</span>';
   let au=[], spsNal=null, ppsNal=null, ts=0, configured=false, buf=new Uint8Array(0), gotFrame=false;
   const hex=(n)=>("0"+n.toString(16)).slice(-2);
   function flushAU() {
@@ -1297,7 +1300,7 @@ function startVisibleCodec() {
         vcDecoder=new VideoDecoder({
           output:(f)=>{
             vcLastFrame=Date.now(); vcBackoff=1;
-            if (!gotFrame) { gotFrame=true; }
+            if (!gotFrame) { gotFrame=true; $("vlink").innerHTML='<span class="ok">WebCodecs</span>'; }
             if (vcanvas.width!==f.displayWidth || vcanvas.height!==f.displayHeight) {
               vcanvas.width=f.displayWidth; vcanvas.height=f.displayHeight;
             }
@@ -1360,7 +1363,8 @@ function startVisibleCodec() {
     } catch(e) { mjpegFallback("no raw stream"); }
   })();
 }
-if (("VideoDecoder" in window) && window.isSecureContext && !/[?&]mjpeg=1/.test(location.search)) startVisibleCodec();
+if (("VideoDecoder" in window) && !/[?&]mjpeg=1/.test(location.search)) startVisibleCodec();
+else mjpegFallback(("VideoDecoder" in window) ? "mjpeg forced" : "no VideoDecoder");
 setInterval(()=>{
   if (!vcOn || vcFallback || document.hidden) return;
   const now=Date.now();
@@ -1368,7 +1372,7 @@ setInterval(()=>{
   else if (!vcLastFrame && vcStart && now-vcStart>10000) mjpegFallback("no frame");
 },2000);
 document.addEventListener("visibilitychange",()=>{
-  if (!document.hidden && vcFallback && ("VideoDecoder" in window) && window.isSecureContext) {
+  if (!document.hidden && vcFallback && ("VideoDecoder" in window)) {
     vcFallback=false; vcLastFrame=0; vcStart=0; vcBackoff=1; startVisibleCodec();
   }
 });
@@ -1394,7 +1398,7 @@ async function poll() {
     }
     $("seq").textContent=d.seq??"–";
     $("link").innerHTML=connected?'<span class="ok">connected</span>':'<span class="err">offline</span>';
-    $("vlink").innerHTML=d.video?'<span class="ok">transcoding</span>':'<span class="warn">unavailable</span>';
+    // vlink is owned by the visible-feed path: WebCodecs / MJPEG / starting.
     if (d.palettes) paintPalettes(d.palettes,(d.display||{}).palette);
     if (d.display) {
       const sig = JSON.stringify(d.display);
