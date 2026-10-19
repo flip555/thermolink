@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -129,6 +129,44 @@ async fn main() -> Result<()> {
     }
 }
 
+fn insert_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+fn ensure_tls_cert(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+    let cert = data_dir.join("tls-cert.pem");
+    let key = data_dir.join("tls-key.pem");
+    if cert.exists() && key.exists() {
+        return Ok((cert, key));
+    }
+    std::fs::create_dir_all(data_dir)?;
+    let status = std::process::Command::new("openssl")
+        .args([
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650",
+            "-keyout", key.to_str().context("key path")?,
+            "-out", cert.to_str().context("cert path")?,
+            "-subj", "/CN=thermolink",
+            "-addext", "subjectAltName=IP:172.20.1.85,IP:172.20.5.127,IP:127.0.0.1,DNS:localhost",
+        ])
+        .status()
+        .context("running openssl")?;
+    if !status.success() {
+        anyhow::bail!("openssl could not generate a certificate");
+    }
+    Ok((cert, key))
+}
+
+async fn mark_https(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    req.headers_mut().insert(
+        "x-forwarded-proto",
+        axum::http::HeaderValue::from_static("https"),
+    );
+    next.run(req).await
+}
+
 async fn serve(
     driver: String,
     host: String,
@@ -138,6 +176,7 @@ async fn serve(
     demo: bool,
     data_dir: PathBuf,
 ) -> Result<()> {
+    insert_crypto_provider();
     let driver = if demo { "mock".to_string() } else { driver };
     let cfg = camera_config(driver, host, control_port, media_port);
     let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);
@@ -157,7 +196,7 @@ async fn serve(
         video,
         driver.clone(),
         cfg.host.clone(),
-        data_dir,
+        data_dir.clone(),
     ));
 
     tokio::spawn(camera_supervisor(driver, hub.clone(), connected));
@@ -168,6 +207,28 @@ async fn serve(
         .await
         .with_context(|| format!("binding {bind}"))?;
     info!(%bind, "ThermoLink web UI ready");
+
+    match ensure_tls_cert(&data_dir) {
+        Ok((cert, key)) => match axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await {
+            Ok(tls) => {
+                let addr: std::net::SocketAddr = "0.0.0.0:8443".parse()?;
+                let https_router = server::router(state.clone())
+                    .layer(axum::middleware::from_fn(mark_https));
+                tokio::spawn(async move {
+                    if let Err(e) = axum_server::bind_rustls(addr, tls)
+                        .serve(https_router.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                        .await
+                    {
+                        warn!(error = %e, "https listener stopped");
+                    }
+                });
+                info!(%addr, "ThermoLink HTTPS ready (self-signed)");
+            }
+            Err(e) => warn!(error = %e, "https disabled: certificate could not be loaded"),
+        },
+        Err(e) => warn!(error = %e, "https disabled: certificate could not be created"),
+    }
+
     axum::serve(
         listener,
         server::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
