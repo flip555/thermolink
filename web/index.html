@@ -289,21 +289,17 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-// These must exist before `state` is built: its initialiser calls saved().
 const saved = (k, d) => { try { const v = localStorage.getItem("thermolink." + k); return v === null ? d : v; } catch(e) { return d; } };
 const save = (k, v) => { try { localStorage.setItem("thermolink." + k, v); } catch(e) {} };
+
 const state = {
-  unit: "C", display: null, initialized: false, palettes: [], mode: "thermal",
-  w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false,
-  split: Number(saved("split", "50")), anchor: "left", feedStarted: false, visStarted: false,
-  polyMode: false, polyPts: [],
+  unit: saved("unit", "C"), display: null, initialized: false, palettes: [],
+  mode: saved("mode", "thermal"), anchor: saved("anchor", "left"),
+  split: Number(saved("split", "50")), dt: saved("dt", "0") === "1",
+  w: 160, h: 120, regions: [], alarms: [], history: [], lastAlarm: null, dismissed: null,
+  polyMode: false, polyPts: [], feedStarted: false, visStarted: false,
   align: {x:0,y:0,scale:1,rot:0,flip_h:false,flip_v:false}
 };
-
-state.unit = saved("unit", "C");
-state.mode = saved("mode", "thermal");
-state.anchor = saved("anchor", "left");
-state.dt = saved("dt", "0") === "1";
 
 function fmt(c) {
   if (c === null || c === undefined || Number.isNaN(c)) return "–";
@@ -311,17 +307,34 @@ function fmt(c) {
   return v.toFixed(1) + "°" + state.unit;
 }
 
-// ---- tabs / modes ------------------------------------------------------
-for (const b of $("tabs").children) {
-  b.onclick = () => {
-    for (const x of $("tabs").children) x.classList.toggle("active", x === b);
-    for (const p of document.querySelectorAll(".tabpanel")) p.classList.toggle("active", p.id === "tab-" + b.dataset.tab);
-    if (b.dataset.tab === "measure") loadRegions();
-    if (b.dataset.tab === "alarms") { loadAlarms(); loadNotify(); }
-    if (b.dataset.tab === "capture") listSnaps();
-    save("tab", b.dataset.tab);
-  };
+// ---------- auth (optional: open until a password is set) ----------
+async function initAuth() {
+  try {
+    const d = await (await fetch("/api/whoami")).json();
+    if (!d.configured || d.authenticated) {
+      $("auth").classList.remove("show");
+      $("logout").style.display = d.configured ? "" : "none";
+      return;
+    }
+    $("authTitle").textContent = "Sign in";
+    $("authHint").textContent = "Enter your credentials.";
+    $("authSubmit").textContent = "Sign in";
+    $("auth").classList.add("show");
+  } catch (e) {
+    $("authErr").textContent = "server unreachable";
+    $("auth").classList.add("show");
+  }
 }
+$("authForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = { username: $("authUser").value, password: $("authPass").value };
+  const r = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  if (r.ok) location.reload();
+  else $("authErr").textContent = await r.text();
+};
+$("logout").onclick = async () => { await fetch("/api/logout", { method:"POST" }); location.reload(); };
+
+// ---------- modes / tabs / wipe ----------
 function applyWipe() {
   const v = $("viewer");
   v.style.setProperty("--split", state.split + "%");
@@ -329,47 +342,28 @@ function applyWipe() {
     (state.mode === "wipe" ? " anchor-" + state.anchor : "");
   for (const b of $("anchors").children) b.classList.toggle("active", b.dataset.anchor === state.anchor);
 }
-for (const b of $("modes").children) {
-  b.onclick = () => {
-    state.mode = b.dataset.mode;
-    save("mode", state.mode);
-    for (const x of $("modes").children) x.classList.toggle("active", x === b);
-    applyWipe();
-  };
+function setMode(mode, persist = true) {
+  state.mode = mode;
+  if (persist) save("mode", mode);
+  for (const b of $("modes").children) b.classList.toggle("active", b.dataset.mode === mode);
+  applyWipe();
 }
+for (const b of $("modes").children) b.onclick = () => setMode(b.dataset.mode);
+
+function setTab(name, persist = true) {
+  if (persist) save("tab", name);
+  for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.tab === name);
+  for (const p of document.querySelectorAll(".tabpanel")) p.classList.toggle("active", p.id === "tab-" + name);
+  if (name === "measure") loadRegions();
+  if (name === "alarms") { loadAlarms(); loadNotify(); }
+  if (name === "capture") listSnaps();
+}
+for (const b of $("tabs").children) b.onclick = () => setTab(b.dataset.tab);
+
 for (const b of $("anchors").children) {
   b.onclick = () => { state.anchor = b.dataset.anchor; save("anchor", state.anchor); applyWipe(); };
 }
 
-function applyAlign(a) {
-  state.align = a;
-  const v = $("viewer");
-  v.style.setProperty("--ax", a.x + "%");
-  v.style.setProperty("--ay", a.y + "%");
-  v.style.setProperty("--as", a.scale);
-  v.style.setProperty("--ar", a.rot + "deg");
-  v.style.setProperty("--fh", a.flip_h ? -1 : 1);
-  v.style.setProperty("--fv", a.flip_v ? -1 : 1);
-  if (document.activeElement !== $("alignScale")) $("alignScale").value = a.scale;
-}
-async function saveAlign(patch) {
-  const next = Object.assign({}, state.align, patch);
-  const r = await fetch("/api/align", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(next) });
-  if (r.ok) { applyAlign(await r.json()); $("alignState").textContent = `${state.align.x}%, ${state.align.y}% · ${state.align.scale.toFixed(2)}× · ${state.align.rot}°`; }
-}
-for (const b of document.querySelectorAll("#tab-display button[data-nudge]")) {
-  b.onclick = () => {
-    const [dx,dy] = b.dataset.nudge.split(",").map(Number);
-    saveAlign({ x: state.align.x + dx, y: state.align.y + dy });
-  };
-}
-$("rot90").onclick = () => saveAlign({ rot: (state.align.rot + 90) % 360 });
-$("fliph").onclick = () => saveAlign({ flip_h: !state.align.flip_h });
-$("flipv").onclick = () => saveAlign({ flip_v: !state.align.flip_v });
-$("alignReset").onclick = () => saveAlign({ x:0, y:0, scale:1, rot:0, flip_h:false, flip_v:false });
-$("alignScale").oninput = (e) => saveAlign({ scale: Number(e.target.value) });
-
-// Drag the divider directly.
 let wipeDrag = false;
 $("wipebar").addEventListener("pointerdown", (e) => {
   wipeDrag = true; e.stopPropagation();
@@ -386,7 +380,37 @@ window.addEventListener("pointermove", (e) => {
 });
 window.addEventListener("pointerup", () => { wipeDrag = false; });
 
-// ---- display -----------------------------------------------------------
+// ---------- alignment ----------
+function applyAlign(a) {
+  state.align = a;
+  const v = $("viewer");
+  v.style.setProperty("--ax", a.x + "%");
+  v.style.setProperty("--ay", a.y + "%");
+  v.style.setProperty("--as", a.scale);
+  v.style.setProperty("--ar", a.rot + "deg");
+  v.style.setProperty("--fh", a.flip_h ? -1 : 1);
+  v.style.setProperty("--fv", a.flip_v ? -1 : 1);
+  if (document.activeElement !== $("alignScale")) $("alignScale").value = a.scale;
+  $("alignState").textContent = `${a.x}%, ${a.y}% · ${a.scale.toFixed(2)}× · ${a.rot}°`;
+}
+async function saveAlign(patch) {
+  const next = Object.assign({}, state.align, patch);
+  const r = await fetch("/api/align", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(next) });
+  if (r.ok) applyAlign(await r.json());
+}
+for (const b of document.querySelectorAll("#tab-display button[data-nudge]")) {
+  b.onclick = () => {
+    const [dx,dy] = b.dataset.nudge.split(",").map(Number);
+    saveAlign({ x: state.align.x + dx, y: state.align.y + dy });
+  };
+}
+$("rot90").onclick = () => saveAlign({ rot: (state.align.rot + 90) % 360 });
+$("fliph").onclick = () => saveAlign({ flip_h: !state.align.flip_h });
+$("flipv").onclick = () => saveAlign({ flip_v: !state.align.flip_v });
+$("alignReset").onclick = () => saveAlign({ x:0, y:0, scale:1, rot:0, flip_h:false, flip_v:false });
+$("alignScale").oninput = (e) => saveAlign({ scale: Number(e.target.value) });
+
+// ---------- display ----------
 function paintPalettes(list, current) {
   if (!list || !list.length) return;
   if (!state.palettes.length) {
@@ -410,7 +434,6 @@ const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Nu
 $("apply").onclick = () => setDisplay({ clip_lo:numOrNull("clipLo"), clip_hi:numOrNull("clipHi"), span_lo:numOrNull("spanLo"), span_hi:numOrNull("spanHi") });
 $("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value=""; setDisplay({clip_lo:null,clip_hi:null,span_lo:null,span_hi:null}); };
 $("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; save("unit", state.unit); $("unit").textContent = "°"+state.unit; poll(); };
-
 function fillDisplay(d) {
   if (!d) return;
   state.display = d; paintPalettes(state.palettes, d.palette);
@@ -418,7 +441,7 @@ function fillDisplay(d) {
   for (const [id,val] of Object.entries(map)) { const el=$(id); if (document.activeElement!==el) el.value = val===null?"":val; }
 }
 
-// ---- measurement -------------------------------------------------------
+// ---------- measurement ----------
 const viewer = $("viewer");
 let drag = null;
 function toThermal(e) {
@@ -428,13 +451,9 @@ function toThermal(e) {
   return [Math.floor(x*state.w), Math.floor(y*state.h)];
 }
 viewer.addEventListener("pointerdown", (e) => {
-  if (state.mode === "visible" || state.mode === "wipe") return;
-  if (state.polyMode) {
-    drag = toThermal(e);
-    viewer.setPointerCapture(e.pointerId);
-    return;
-  }
+  if (state.mode === "visible" || state.mode === "wipe" || state.mode === "pip") return;
   drag = toThermal(e);
+  if (state.polyMode) { viewer.setPointerCapture(e.pointerId); return; }
   const r = viewer.getBoundingClientRect();
   $("sel").style.display="block";
   $("sel").style.left=(e.clientX-r.left)+"px"; $("sel").style.top=(e.clientY-r.top)+"px";
@@ -442,7 +461,7 @@ viewer.addEventListener("pointerdown", (e) => {
   viewer.setPointerCapture(e.pointerId);
 });
 viewer.addEventListener("pointermove", (e) => {
-  if (!drag) return;
+  if (!drag || state.polyMode) return;
   const r = viewer.getBoundingClientRect();
   const x=e.clientX-r.left, y=e.clientY-r.top;
   const x0=drag[0]/state.w*r.width, y0=drag[1]/state.h*r.height;
@@ -454,21 +473,19 @@ viewer.addEventListener("pointerup", async (e) => {
   const start=drag; drag=null; $("sel").style.display="none";
   const end=toThermal(e);
   if (state.polyMode) {
-    const [x,y] = start;
     if (state.polyPts.length >= 3) {
       const [fx,fy] = state.polyPts[0];
-      if (Math.abs(x-fx) <= 3 && Math.abs(y-fy) <= 3) {
+      if (Math.abs(start[0]-fx) <= 3 && Math.abs(start[1]-fy) <= 3) {
         const pts = state.polyPts.slice();
         state.polyMode = false; state.polyPts = [];
         $("polyBtn").classList.remove("active"); $("polyHint").textContent = "";
         await fetch("/api/regions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ kind:"poly", pts }) });
-        loadRegions();
-        drawRegions();
+        loadRegions(); drawRegions();
         return;
       }
     }
-    state.polyPts.push([x,y]);
-    $("polyHint").textContent = `${state.polyPts.length} points — click the first point to close`;
+    state.polyPts.push(start);
+    $("polyHint").textContent = `${state.polyPts.length} points — click the first to close`;
     drawRegions();
     return;
   }
@@ -480,7 +497,12 @@ viewer.addEventListener("pointerup", async (e) => {
     loadRegions();
   }
 });
-
+$("polyBtn").onclick = () => {
+  state.polyMode = !state.polyMode; state.polyPts = [];
+  $("polyBtn").classList.toggle("active", state.polyMode);
+  $("polyHint").textContent = state.polyMode ? "click points; click the first to close" : "";
+  drawRegions();
+};
 function drawRegions() {
   const svg = $("overlay");
   svg.setAttribute("viewBox", `0 0 ${state.w} ${state.h}`);
@@ -505,7 +527,7 @@ function drawRegions() {
   }
   if (state.polyPts.length) {
     const pl = document.createElementNS("http://www.w3.org/2000/svg","polyline");
-    pl.setAttribute("points", state.polyPts.map(p => `${p[0]},${p[1]}`).join(" "));
+    pl.setAttribute("points", state.polyPts.map(p=>`${p[0]},${p[1]}`).join(" "));
     pl.setAttribute("fill","none"); pl.setAttribute("stroke","#ffd166"); pl.setAttribute("stroke-width","0.8");
     pl.setAttribute("stroke-dasharray","2 1.5");
     svg.appendChild(pl);
@@ -516,13 +538,6 @@ function drawRegions() {
     }
   }
 }
-$("polyBtn").onclick = () => {
-  state.polyMode = !state.polyMode;
-  state.polyPts = [];
-  $("polyBtn").classList.toggle("active", state.polyMode);
-  $("polyHint").textContent = state.polyMode ? "click points; click the first to close" : "";
-  drawRegions();
-};
 async function loadRegions() {
   try {
     const d = await (await fetch("/api/regions")).json();
@@ -538,17 +553,15 @@ async function loadRegions() {
             `<button class="x" data-id="${r.id}">×</button></li>`;
         }).join("")
       : "<li><span class='grow'>No measurements</span></li>";
-    for (const b of $("regions").querySelectorAll("button[data-id]")) {
+    for (const b of $("regions").querySelectorAll("button[data-id]"))
       b.onclick = async () => { await fetch("/api/regions/"+b.dataset.id,{method:"DELETE"}); loadRegions(); };
-    }
-    for (const b of $("regions").querySelectorAll("button[data-ref]")) {
+    for (const b of $("regions").querySelectorAll("button[data-ref]"))
       b.onclick = async () => { await fetch("/api/regions/"+b.dataset.ref+"/ref",{method:"POST"}); loadRegions(); };
-    }
-  } catch (e) {}
+  } catch(e) {}
 }
 $("clearRegions").onclick = async () => { await fetch("/api/regions",{method:"DELETE"}); loadRegions(); };
 
-// ---- alarms ------------------------------------------------------------
+// ---------- alarms / notifications ----------
 async function loadAlarms() {
   try {
     const d = await (await fetch("/api/alarms")).json();
@@ -558,9 +571,8 @@ async function loadAlarms() {
           `<li><span class="grow">${a.name}</span><span class="val">${a.kind} ${fmt(a.threshold_c)} · ${a.dwell_s}s</span>` +
           `<button class="x" data-id="${a.id}">×</button></li>`).join("")
       : "<li><span class='grow'>No alarms</span></li>";
-    for (const b of $("alarms").querySelectorAll("button[data-id]")) {
+    for (const b of $("alarms").querySelectorAll("button[data-id]"))
       b.onclick = async () => { await fetch("/api/alarms/"+b.dataset.id,{method:"DELETE"}); loadAlarms(); };
-    }
     const last = d.last_alarm;
     if (last) state.lastAlarm = last;
     $("lastAlarm").innerHTML = last
@@ -570,29 +582,15 @@ async function loadAlarms() {
       $("bannerText").textContent = `${last.name} · ${fmt(last.value_c)} (${last.kind} ${fmt(last.threshold_c)})`;
       $("banner").classList.add("show");
     } else $("banner").classList.remove("show");
-  } catch (e) {}
+  } catch(e) {}
 }
-$("dismiss").onclick = () => {
-  if (state.lastAlarm) state.dismissed = state.lastAlarm.at + state.lastAlarm.name;
-  $("banner").classList.remove("show");
-};
+$("dismiss").onclick = () => { if (state.lastAlarm) state.dismissed = state.lastAlarm.at + state.lastAlarm.name; $("banner").classList.remove("show"); };
 $("addAlarm").onclick = async () => {
   const body = { kind:$("alarmKind").value, threshold_c:Number($("alarmC").value), dwell_s:Number($("alarmDwell").value)||0, name:$("alarmName").value };
   const r = await fetch("/api/alarms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   $("alarmState").textContent = r.ok ? "added" : "error: " + (await r.text());
   if (r.ok) loadAlarms();
 };
-
-$("camRead").onclick = async () => {
-  $("camSettings").innerHTML = "<span>Reading…</span><span></span>";
-  const r = await fetch("/api/camera/settings");
-  if (!r.ok) { $("camSettings").innerHTML = `<span>Error</span><span>${await r.text()}</span>`; return; }
-  const d = await r.json();
-  $("camSettings").innerHTML = Object.entries(d)
-    .map(([k,v]) => `<span>${k}</span><span>${v}</span>`).join("");
-};
-
-// ---- notifications -----------------------------------------------------
 async function loadNotify() {
   try {
     const d = await (await fetch("/api/notify")).json();
@@ -613,13 +611,21 @@ $("notifySave").onclick = async () => {
   if (r.ok) { for (const id of Object.keys(map)) $(id).value = ""; loadNotify(); }
 };
 $("notifyClear").onclick = async () => {
-  const body = { discord:"", slack:"", telegram_token:"", telegram_chat:"", webhook:"" };
-  await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ discord:"", slack:"", telegram_token:"", telegram_chat:"", webhook:"" })});
   for (const id of ["notifyDiscord","notifySlack","notifyTgToken","notifyTgChat","notifyHook"]) $(id).value = "";
   loadNotify();
 };
 
-// ---- capture / reference ----------------------------------------------
+// ---------- camera settings ----------
+$("camRead").onclick = async () => {
+  $("camSettings").innerHTML = "<span>Reading…</span><span></span>";
+  const r = await fetch("/api/camera/settings");
+  if (!r.ok) { $("camSettings").innerHTML = `<span>Error</span><span>${await r.text()}</span>`; return; }
+  const d = await r.json();
+  $("camSettings").innerHTML = Object.entries(d).map(([k,v]) => `<span>${k}</span><span>${v}</span>`).join("");
+};
+
+// ---------- capture / reference ----------
 $("snap").onclick = $("snapTop").onclick = async () => {
   $("snapState").textContent = "saving…";
   const r = await fetch("/api/snapshot",{method:"POST"});
@@ -633,11 +639,7 @@ async function listSnaps() {
 }
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
 $("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELETE"}); $("dtStats").innerHTML="<span>ΔT</span><span>no reference</span>"; };
-$("dtToggle").onchange = (e) => {
-  state.dt = e.target.checked; save("dt", state.dt ? "1" : "0");
-  $("viewer").className = "viewer " + state.mode + (state.dt ? " dt" : "");
-  if (state.dt) refreshDt();
-};
+$("dtToggle").onchange = (e) => { state.dt = e.target.checked; save("dt", state.dt ? "1" : "0"); applyWipe(); if (state.dt) refreshDt(); };
 async function refreshDt() {
   if (!state.dt) return;
   $("dtimg").src = "/api/dt.jpg?t=" + Date.now();
@@ -649,10 +651,9 @@ async function refreshDt() {
   } catch(e){}
 }
 
-// ---- calibration -------------------------------------------------------
+// ---------- calibration ----------
 $("calApply").onclick = async () => {
-  const r = await fetch("/api/calibration",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({scale:Number($("calScale").value),offset:Number($("calOffset").value)})});
+  const r = await fetch("/api/calibration",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scale:Number($("calScale").value),offset:Number($("calOffset").value)})});
   $("calState").textContent = r.ok ? "applied" : "error: " + (await r.text());
 };
 $("calFactory").onclick = async () => {
@@ -660,7 +661,7 @@ $("calFactory").onclick = async () => {
   $("calScale").value=0.01; $("calOffset").value=0; $("calState").textContent="factory";
 };
 
-// ---- chart -------------------------------------------------------------
+// ---------- history chart ----------
 async function loadHistory() {
   try {
     const d = await (await fetch("/api/history.json?limit=600")).json();
@@ -682,9 +683,9 @@ function drawChart() {
   let lo=Infinity, hi=-Infinity;
   for (const x of s) { lo=Math.min(lo,x.min_c,x.mean_c,x.max_c); hi=Math.max(hi,x.min_c,x.mean_c,x.max_c); }
   if (hi-lo < 1) { hi += .5; lo -= .5; }
-  const pad = 2, left = 34, bottom = 4;
+  const left=34, pad=2;
   const px = (i) => left + (i/(s.length-1))*(w-left-2);
-  const py = (v) => pad + (1-(v-lo)/(hi-lo))*(h-pad-bottom-10);
+  const py = (v) => pad + (1-(v-lo)/(hi-lo))*(h-pad-14);
   g.strokeStyle="#1b222b"; g.lineWidth=1; g.font="9px ui-monospace,monospace"; g.fillStyle="#5c6673";
   for (let k=0;k<=2;k++) {
     const v = lo + (hi-lo)*k/2, y = py(v);
@@ -699,7 +700,7 @@ function drawChart() {
   line("max", "#ff9f1a"); line("mean", "#9aa4b2"); line("min", "#7fd1ff");
 }
 
-// ---- poll --------------------------------------------------------------
+// ---------- poll ----------
 async function poll() {
   try {
     const d = await (await fetch("/api/thermal.json",{cache:"no-store"})).json();
@@ -723,14 +724,8 @@ async function poll() {
     if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized=true; }
     if (d.calibration && document.activeElement!==$("calScale")) { $("calScale").value=d.calibration.scale; $("calOffset").value=d.calibration.offset; }
     if (d.align) applyAlign(d.align);
-    if (ready && !state.feedStarted) {
-      state.feedStarted = true;
-      $("feed").src = "/api/thermal.mjpg?t=" + Date.now();
-    }
-    if (d.video && !state.visStarted) {
-      state.visStarted = true;
-      $("vis").src = "/api/video.mjpg?t=" + Date.now();
-    }
+    if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = "/api/thermal.mjpg?t=" + Date.now(); }
+    if (d.video && !state.visStarted) { state.visStarted = true; $("vis").src = "/api/video.mjpg?t=" + Date.now(); }
     if (!ready || !d.stats) return;
     const s=d.stats;
     $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
@@ -743,16 +738,18 @@ async function poll() {
   }
 }
 
-$("feed").onerror = () => {
-  state.feedStarted = false;
-  setTimeout(() => { $("feed").src = "/api/thermal.mjpg?t=" + Date.now(); state.feedStarted = true; }, 2000);
-};
-$("vis").onerror = () => {
-  state.visStarted = false;
-  setTimeout(() => { $("vis").src = "/api/video.mjpg?t=" + Date.now(); state.visStarted = true; }, 2000);
-};
+$("feed").onerror = () => { state.feedStarted=false; setTimeout(()=>{ $("feed").src="/api/thermal.mjpg?t="+Date.now(); state.feedStarted=true; }, 2000); };
+$("vis").onerror = () => { state.visStarted=false; setTimeout(()=>{ $("vis").src="/api/video.mjpg?t="+Date.now(); state.visStarted=true; }, 2000); };
 
+// ---------- startup ----------
+initAuth();
+$("unit").textContent = "°" + state.unit;
+$("dtToggle").checked = state.dt;
+setMode(state.mode, false);
+setTab(saved("tab", "display"), false);
 applyWipe();
+if (state.dt) refreshDt();
+
 fetch("/api/version").then(r=>r.json()).then(d=>{ $("ver").textContent = d.version || "–"; }).catch(()=>{});
 
 poll(); setInterval(poll, 1000);
@@ -762,6 +759,7 @@ loadAlarms(); setInterval(loadAlarms, 2000);
 listSnaps();
 setInterval(() => { if (state.dt) refreshDt(); }, 1000);
 window.addEventListener("resize", drawChart);
+
 </script>
 </body>
 </html>

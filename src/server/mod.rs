@@ -402,6 +402,11 @@ async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> R
     if public_path(req.uri().path()) {
         return next.run(req).await;
     }
+    // Auth is opt-in: until an account exists the app is open, matching the
+    // previous behaviour. Setting a password turns the gate on.
+    if st.auth.read().await.is_none() {
+        return next.run(req).await;
+    }
     if let Some(token) = session_token(req.headers()) {
         let valid = st
             .sessions
@@ -418,18 +423,24 @@ async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> R
 
 async fn whoami(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<serde_json::Value> {
     let auth = st.auth.read().await.clone();
-    let authenticated = match session_token(&headers) {
-        Some(token) => st
-            .sessions
-            .read()
-            .await
-            .get(&token)
-            .is_some_and(|expires| *expires > Instant::now()),
-        None => false,
+    let configured = auth.is_some();
+    let authenticated = if !configured {
+        true
+    } else {
+        match session_token(&headers) {
+            Some(token) => st
+                .sessions
+                .read()
+                .await
+                .get(&token)
+                .is_some_and(|expires| *expires > Instant::now()),
+            None => false,
+        }
     };
     Json(json!({
         "authenticated": authenticated,
-        "setup_required": auth.is_none(),
+        "configured": configured,
+        "setup_required": false,
         "user": auth.map(|a| a.username),
     }))
 }
