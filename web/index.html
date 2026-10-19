@@ -414,6 +414,10 @@ window.fetch = (input, init = {}) => {
   } catch (e) {}
   return nativeFetch(input, init);
 };
+function withToken(url) {
+  let token = null; try { token = localStorage.getItem(["thermo","link","token"].join(".")); } catch (e) {}
+  return token ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) : url;
+}
 
 // ---------- i18n ----------
 const LANGS = [
@@ -1173,9 +1177,9 @@ async function listSnaps() {
     const names = (d.snapshots || []).slice().sort().reverse().slice(0, 12);
     $("snaps").innerHTML = names.map(n =>
       `<div class="snaprow"><span class="grow">${n}</span>` +
-      `<a class="hint" href="/api/snapshots/${n}" target="_blank" rel="noreferrer">jpg</a>` +
-      `<a class="hint" href="/api/snapshots/${n}.raw">raw</a>` +
-      `<a class="hint" href="/api/snapshots/${n}.json">json</a>` +
+      `<a class="hint" href="${withToken('/api/snapshots/' + n)}" target="_blank" rel="noreferrer">jpg</a>` +
+      `<a class="hint" href="${withToken('/api/snapshots/' + n + '.raw')}">raw</a>` +
+      `<a class="hint" href="${withToken('/api/snapshots/' + n + '.json')}">json</a>` +
       `<button class="x" data-del="${n}" title="delete">×</button></div>`
     ).join("");
     for (const b of $("snaps").querySelectorAll("button[data-del]"))
@@ -1187,7 +1191,7 @@ $("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELE
 $("dtToggle").onchange = (e) => { state.dt = e.target.checked; save("dt", state.dt ? "1" : "0"); applyWipe(); if (state.dt) refreshDt(); };
 async function refreshDt() {
   if (!state.dt) return;
-  $("dtimg").src = "/api/dt.jpg?t=" + Date.now();
+  $("dtimg").src = withToken("/api/dt.jpg?t=" + Date.now());
   try {
     const d = await (await fetch("/api/dt.json")).json();
     $("dtStats").innerHTML = d.ready
@@ -1290,8 +1294,8 @@ async function poll() {
     } else {
       $("dtToggle").disabled = false;
     }
-    if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = "/api/thermal.mjpg?t=" + Date.now(); }
-    if (d.video && !state.visStarted) { state.visStarted = true; $("vis").src = "/api/video.mjpg?t=" + Date.now(); }
+    if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); }
+    if (d.video && !state.visStarted) { state.visStarted = true; $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); }
     if (!ready || !d.stats) return;
     const s=d.stats;
     $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
@@ -1307,8 +1311,8 @@ async function poll() {
   }
 }
 
-$("feed").onerror = () => { state.feedStarted=false; setTimeout(()=>{ $("feed").src="/api/thermal.mjpg?t="+Date.now(); state.feedStarted=true; }, 2000); };
-$("vis").onerror = () => { state.visStarted=false; setTimeout(()=>{ $("vis").src="/api/video.mjpg?t="+Date.now(); state.visStarted=true; }, 2000); };
+$("feed").onerror = () => { state.feedStarted=false; setTimeout(()=>{ $("feed").src=withToken("/api/thermal.mjpg?t="+Date.now()); state.feedStarted=true; }, 2000); };
+$("vis").onerror = () => { state.visStarted=false; setTimeout(()=>{ $("vis").src=withToken("/api/video.mjpg?t="+Date.now()); state.visStarted=true; }, 2000); };
 
 // ---------- startup ----------
 initLangPicker();

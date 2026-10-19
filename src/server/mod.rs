@@ -727,6 +727,13 @@ fn public_path(path: &str) -> bool {
         )
 }
 
+fn query_token(uri: &axum::http::Uri) -> Option<String> {
+    uri.query()?.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        (key == "token").then(|| value.to_string())
+    })
+}
+
 fn session_token(headers: &HeaderMap) -> Option<String> {
     if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         if let Some(token) = auth.strip_prefix("Bearer ") {
@@ -808,7 +815,7 @@ async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> R
     let Some(auth) = st.auth.read().await.clone() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "setup required").into_response();
     };
-    let Some(token) = session_token(req.headers()) else {
+    let Some(token) = session_token(req.headers()).or_else(|| query_token(req.uri())) else {
         return (StatusCode::UNAUTHORIZED, "login required").into_response();
     };
     let session = st
