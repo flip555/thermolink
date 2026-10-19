@@ -32,7 +32,9 @@
   .viewer{position:relative;flex:none;margin:auto;min-height:0;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
   .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;user-select:none;-webkit-user-drag:none}
 #visclip{position:absolute;inset:0;overflow:hidden;pointer-events:none}
-  #vis{left:50%;top:50%;right:auto;bottom:auto;width:auto;height:100%;max-width:none;object-fit:fill;transform:translate(-50%,-50%) translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
+  #vidcanvas{position:absolute;left:50%;top:50%;width:auto;height:100%;display:none;transform:translate(-50%,-50%) translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
+.viewer.thermal #vidcanvas{display:none!important}
+#vis{left:50%;top:50%;right:auto;bottom:auto;width:auto;height:100%;max-width:none;object-fit:fill;transform:translate(-50%,-50%) translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
   #dtimg{display:none}
   .viewer.thermal #vis{visibility:hidden}
   .viewer.visible #feed{display:none}
@@ -149,7 +151,7 @@
 <div class="shell">
   <div class="stagecol">
     <section class="viewer thermal" id="viewer">
-      <div id="visclip"><img id="vis" alt="visible" draggable="false"></div>
+      <div id="visclip"><img id="vis" alt="visible" draggable="false"><canvas id="vidcanvas"></canvas></div>
       <img id="feed" alt="thermal" draggable="false">
       <img id="dtimg" alt="difference" draggable="false">
       <svg id="overlay" viewBox="0 0 160 120" preserveAspectRatio="none"></svg>
@@ -469,7 +471,7 @@ function initLangPicker() {
 
 const state = {
   unit: saved("unit", "C"), display: null, initialized: false, palettes: [],
-  mode: saved("mode", "thermal"), anchor: saved("anchor", "left"),
+  mode: saved("mode", "thermal"), codecActive: false, anchor: saved("anchor", "left"),
   split: Number(saved("split", "50")), dt: saved("dt", "0") === "1",
   w: 160, h: 120, regions: [], alarms: [], history: [], lastAlarm: null, dismissed: null,
   polyMode: false, polyPts: [], drawMode: "none", peaks: [], peaksSig: "", pipSize: "medium", chartWin: 60, feedStarted: false, visStarted: false,
@@ -1259,6 +1261,118 @@ $("fullBtn").onclick = () => {
 document.addEventListener("fullscreenchange", fitViewer);
 for (const b of document.querySelectorAll("button[data-pip]")) b.onclick = () => { state.pipSize = b.dataset.pip; applyWipe(); };
 
+// ---------- WebCodecs visible path ----------
+const vcanvas = $("vidcanvas");
+const vctx = vcanvas ? vcanvas.getContext("2d") : null;
+let vcOn=false, vcDecoder=null, vcFallback=false, vcLastFrame=0, vcReader=null, vcStart=0, vcBackoff=1;
+function mjpegFallback(reason) {
+  if (vcFallback) return;
+  vcFallback=true; vcOn=false; state.codecActive=false; state.visStarted=false;
+  try { if (vcDecoder) vcDecoder.close(); } catch(e) {}
+  try { if (vcReader) vcReader.cancel(); } catch(e) {}
+  vcDecoder=null; vcReader=null;
+  if (vcanvas) vcanvas.style.display="none";
+  const vis=$("vis"); vis.style.display="block";
+  vis.src=withToken("/api/video.mjpg?t="+Date.now());
+  console.warn("visible feed: MJPEG fallback - "+(reason||"unavailable"));
+}
+function startVisibleCodec() {
+  if (!vcanvas || !vctx) return;
+  let au=[], spsNal=null, ppsNal=null, ts=0, configured=false, buf=new Uint8Array(0), gotFrame=false;
+  const hex=(n)=>("0"+n.toString(16)).slice(-2);
+  function flushAU() {
+    if (!au.length) return;
+    const isKey=au.some(n=>n.type===5), first=!configured;
+    if (first && !(isKey && spsNal && ppsNal)) { au=[]; return; }
+    const sc=(n)=>(n[2]===1?3:4);
+    let parts=au.map(x=>x.data);
+    if (first) parts=[spsNal,ppsNal].concat(parts);
+    let out=new Uint8Array(parts.reduce((a,d)=>a+d.length,0)), o=0, key=false;
+    for (const d of parts) { out.set(d,o); o+=d.length; }
+    for (const n of au) if (n.type===5) key=true;
+    au=[];
+    if (first) {
+      const sp=spsNal.slice(sc(spsNal));
+      try {
+        vcDecoder=new VideoDecoder({
+          output:(f)=>{
+            vcLastFrame=Date.now(); vcBackoff=1;
+            if (!gotFrame) { gotFrame=true; }
+            if (vcanvas.width!==f.displayWidth || vcanvas.height!==f.displayHeight) {
+              vcanvas.width=f.displayWidth; vcanvas.height=f.displayHeight;
+            }
+            try { vctx.drawImage(f,0,0); } catch(e) {}
+            f.close();
+          },
+          error:()=>mjpegFallback("decoder error")
+        });
+        vcDecoder.configure({codec:"avc1."+hex(sp[1])+hex(sp[2])+hex(sp[3]), optimizeForLatency:true});
+        configured=true;
+      } catch(e) { mjpegFallback("configure failed"); return; }
+    }
+    try { vcDecoder.decode(new EncodedVideoChunk({type:key?"key":"delta",timestamp:ts,data:out})); ts+=66667; }
+    catch(e) {}
+  }
+  function feed(bytes) {
+    const m=new Uint8Array(buf.length+bytes.length); m.set(buf); m.set(bytes,buf.length); buf=m;
+    let lead=0;
+    while (lead+3<=buf.length && !(buf[lead]===0 && buf[lead+1]===0 &&
+      (buf[lead+2]===1 || (lead+4<=buf.length && buf[lead+2]===0 && buf[lead+3]===1)))) lead++;
+    if (lead>0) buf=buf.slice(lead);
+    let pos=0;
+    while (true) {
+      let sc=0;
+      if (pos+4<=buf.length && buf[pos]===0 && buf[pos+1]===0 && buf[pos+2]===0 && buf[pos+3]===1) sc=4;
+      else if (pos+3<=buf.length && buf[pos]===0 && buf[pos+1]===0 && buf[pos+2]===1) sc=3;
+      if (!sc) break;
+      const type=buf[pos+sc]&0x1f;
+      let j=pos+sc+1;
+      while (j+3<=buf.length) {
+        if (buf[j]===0 && buf[j+1]===0 && (buf[j+2]===1 || (j+4<=buf.length && buf[j+2]===0 && buf[j+3]===1))) break;
+        j++;
+      }
+      if (j+3>buf.length) break;
+      const whole=buf.slice(pos,j);
+      if (!(type===1||type===5||type===6||type===7||type===8||type===9)) { pos=j; continue; }
+      if (type>=1 && type<=5 && au.some(n=>n.type>=1 && n.type<=5)) flushAU();
+      if (type===7) spsNal=buf.slice(pos,j);
+      if (type===8) ppsNal=buf.slice(pos,j);
+      au.push({data:whole,type});
+      pos=j;
+    }
+    if (pos) buf=buf.slice(pos);
+    if (buf.length>2000000) buf=new Uint8Array(0);
+  }
+  (async()=>{
+    try {
+      const res=await fetch("/api/raw.h264",{cache:"no-store"});
+      if (!res.ok || !res.body) throw new Error("raw");
+      vcanvas.style.display="block"; $("vis").style.display="none";
+      vcOn=true; state.codecActive=true; vcStart=Date.now();
+      const reader=vcReader=res.body.getReader();
+      for (;;) {
+        const {value,done}=await reader.read();
+        if (done) break;
+        if (value && value.length) feed(value);
+        if (vcDecoder && vcDecoder.decodeQueueSize>24) await new Promise(r=>setTimeout(r,20));
+      }
+      if (!vcFallback) mjpegFallback("stream ended");
+    } catch(e) { mjpegFallback("no raw stream"); }
+  })();
+}
+if (("VideoDecoder" in window) && window.isSecureContext && !/[?&]mjpeg=1/.test(location.search)) startVisibleCodec();
+setInterval(()=>{
+  if (!vcOn || vcFallback || document.hidden) return;
+  const now=Date.now();
+  if (vcLastFrame && now-vcLastFrame>6000) mjpegFallback("stalled");
+  else if (!vcLastFrame && vcStart && now-vcStart>10000) mjpegFallback("no frame");
+},2000);
+document.addEventListener("visibilitychange",()=>{
+  if (!document.hidden && vcFallback && ("VideoDecoder" in window) && window.isSecureContext) {
+    vcFallback=false; vcLastFrame=0; vcStart=0; vcBackoff=1; startVisibleCodec();
+  }
+});
+
 // ---------- poll ----------
 async function poll() {
   try {
@@ -1295,7 +1409,7 @@ async function poll() {
       $("dtToggle").disabled = false;
     }
     if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); }
-    if (d.video && !state.visStarted) { state.visStarted = true; $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); }
+    if (d.video && !state.visStarted && !state.codecActive) { state.visStarted = true; $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); }
     if (!ready || !d.stats) return;
     const s=d.stats;
     $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
