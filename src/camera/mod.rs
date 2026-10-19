@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub mod mock;
 pub mod qianli;
@@ -27,7 +27,7 @@ pub enum StreamKind {
 }
 
 /// `celsius = raw * scale + offset`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Calibration {
     pub scale: f32,
     pub offset: f32,

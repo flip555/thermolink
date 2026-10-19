@@ -98,6 +98,14 @@ struct ActiveClip {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct Reference {
+    pub id: String,
+    pub name: String,
+    pub at: u64,
+    pub vals: Vec<u16>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthFile {
     pub username: String,
     pub hash: String,
@@ -159,6 +167,8 @@ pub struct AppState {
     alarm_active: Mutex<HashSet<String>>,
     pub last_alarm: RwLock<Option<serde_json::Value>>,
     pub reference: RwLock<Option<Vec<u16>>>,
+    pub references: RwLock<Vec<Reference>>,
+    pub active_ref: RwLock<Option<String>>,
     pub prerecord: RwLock<PrerecordConfig>,
     prerec_ring: Arc<Mutex<VecDeque<RingFrame>>>,
     active_clip: Arc<Mutex<Option<ActiveClip>>>,
@@ -210,6 +220,10 @@ impl AppState {
             .ok()
             .and_then(|t| serde_json::from_str::<PrerecordConfig>(&t).ok())
             .unwrap_or_default();
+        let references = std::fs::read_to_string(data_dir.join("references.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Vec<Reference>>(&t).ok())
+            .unwrap_or_default();
         Self {
             spec,
             hub,
@@ -232,6 +246,8 @@ impl AppState {
             alarm_active: Mutex::new(HashSet::new()),
             last_alarm: RwLock::new(None),
             reference: RwLock::new(None),
+            references: RwLock::new(references),
+            active_ref: RwLock::new(None),
             prerecord: RwLock::new(prerecord),
             prerec_ring: Arc::new(Mutex::new(VecDeque::with_capacity(400))),
             active_clip: Arc::new(Mutex::new(None)),
@@ -281,6 +297,12 @@ impl AppState {
         let n = self.notify.read().await.clone();
         let _ = std::fs::create_dir_all(&self.data_dir);
         let _ = std::fs::write(self.data_dir.join("notifications.json"), serde_json::to_vec_pretty(&n).unwrap_or_default());
+    }
+
+    async fn persist_references(&self) {
+        let list = self.references.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(self.data_dir.join("references.json"), serde_json::to_vec_pretty(&list).unwrap_or_default());
     }
 
     async fn persist_prerecord(&self) {
@@ -424,6 +446,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/alarms", get(get_alarms).post(add_alarm).delete(clear_alarms))
         .route("/api/alarms/{id}", delete(delete_alarm))
         .route("/api/reference", post(set_reference).delete(clear_reference))
+        .route("/api/references", get(list_references).post(add_reference).delete(clear_references))
+        .route("/api/references/{id}", delete(delete_reference))
+        .route("/api/references/{id}/activate", post(activate_reference))
+        .route("/api/compare.json", get(compare_json))
+        .route("/api/compare.jpg", get(compare_jpg))
         .route("/api/dt.jpg", get(dt_image))
         .route("/api/dt.json", get(dt_json))
         .route("/api/reanalyze.jpg", get(reanalyze_jpg))
@@ -929,6 +956,152 @@ async fn clear_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
     st.persist_alarms().await;
     *st.last_alarm.write().await = None;
     Json(json!({ "ok": true }))
+}
+
+#[derive(Deserialize)]
+struct ReferenceRequest {
+    #[serde(default)]
+    name: String,
+}
+
+async fn list_references(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let list = st.references.read().await.clone();
+    let active = st.active_ref.read().await.clone();
+    Json(json!({
+        "active": active,
+        "references": list.iter().map(|r| json!({
+            "id": r.id,
+            "name": r.name,
+            "at": r.at,
+            "active": active.as_deref() == Some(r.id.as_str()),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+async fn add_reference(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<ReferenceRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let img = st
+        .thermal_image()
+        .await
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let vals: Vec<u16> = img.values().collect();
+    let id = format!("r{}", now_secs() * 1000 + now_ms() % 1000);
+    let name = if req.name.trim().is_empty() {
+        format!("ref {}", now_secs())
+    } else {
+        req.name.trim().to_string()
+    };
+    let reference = Reference {
+        id: id.clone(),
+        name,
+        at: now_secs(),
+        vals: vals.clone(),
+    };
+    st.references.write().await.push(reference.clone());
+    *st.reference.write().await = Some(vals);
+    *st.active_ref.write().await = Some(id);
+    st.persist_references().await;
+    Ok(Json(json!({ "ok": true, "id": reference.id })))
+}
+
+async fn activate_reference(
+    State(st): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let list = st.references.read().await.clone();
+    let Some(reference) = list.into_iter().find(|r| r.id == id) else {
+        return Err((StatusCode::NOT_FOUND, "no such reference".into()));
+    };
+    *st.reference.write().await = Some(reference.vals);
+    *st.active_ref.write().await = Some(reference.id);
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn delete_reference(
+    State(st): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Json<serde_json::Value> {
+    st.references.write().await.retain(|r| r.id != id);
+    if st.active_ref.read().await.as_deref() == Some(id.as_str()) {
+        *st.reference.write().await = None;
+        *st.active_ref.write().await = None;
+    }
+    st.persist_references().await;
+    Json(json!({ "ok": true }))
+}
+
+async fn clear_references(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    st.references.write().await.clear();
+    *st.reference.write().await = None;
+    *st.active_ref.write().await = None;
+    st.persist_references().await;
+    Json(json!({ "ok": true }))
+}
+
+#[derive(Deserialize)]
+struct CompareQuery {
+    name: String,
+}
+
+async fn compare_json(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<CompareQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let snap = load_snapshot(&st, &q.name)?;
+    let cur = st
+        .thermal_image()
+        .await
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let snap_vals: Vec<u16> = snap.values().collect();
+    let mut min = f32::MAX;
+    let mut max = f32::MIN;
+    let mut sum = 0.0;
+    let mut n = 0u32;
+    let mut hot = (0u32, 0u32);
+    let mut hot_abs = f32::MIN;
+    for (i, a) in cur.values().enumerate() {
+        let Some(&b) = snap_vals.get(i) else { break };
+        let ta = a as f32 * cur.calibration.scale + cur.calibration.offset;
+        let tb = b as f32 * snap.calibration.scale + snap.calibration.offset;
+        let d = ta - tb;
+        if d.abs() > hot_abs {
+            hot_abs = d.abs();
+            hot = ((i as u32) % cur.width, (i as u32) / cur.width);
+        }
+        min = min.min(d);
+        max = max.max(d);
+        sum += d;
+        n += 1;
+    }
+    Ok(Json(json!({
+        "name": q.name,
+        "ready": n > 0,
+        "min_c": round2(if n > 0 { min } else { 0.0 }),
+        "max_c": round2(if n > 0 { max } else { 0.0 }),
+        "avg_c": round2(if n > 0 { sum / n as f32 } else { 0.0 }),
+        "n": n,
+        "max_at": [hot.0, hot.1],
+    })))
+}
+
+async fn compare_jpg(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<CompareQuery>,
+) -> Response {
+    let snap = match load_snapshot(&st, &q.name) {
+        Ok(s) => s,
+        Err((code, msg)) => return (code, msg).into_response(),
+    };
+    let Some(cur) = st.thermal_image().await else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet").into_response();
+    };
+    let vals: Vec<u16> = snap.values().collect();
+    match dt_jpeg(&cur, &vals, 5.0, 85) {
+        Ok(jpeg) => jpeg_response(jpeg),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn set_reference(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
