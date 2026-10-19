@@ -1,8 +1,9 @@
 //! HTTP surface. Deliberately imports `camera` and `render`, never a driver.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -305,79 +306,103 @@ impl AppState {
         self.data_dir.join("snapshots")
     }
 
-    async fn persist_regions(&self) {
+    async fn persist_regions(&self) -> io::Result<()> {
         let list = self.regions.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(
-            self.data_dir.join("regions.json"),
-            serde_json::to_vec_pretty(&list).unwrap_or_default(),
-        );
+        write_atomic(&self.data_dir, "regions.json", &json_bytes(&list)?).await
     }
 
-    async fn persist_display(&self) {
+    async fn persist_display(&self) -> io::Result<()> {
         let d = self.display.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(self.data_dir.join("display.json"), serde_json::to_vec_pretty(&d).unwrap_or_default());
+        write_atomic(&self.data_dir, "display.json", &json_bytes(&d)?).await
     }
 
-    async fn persist_align(&self) {
+    async fn persist_align(&self) -> io::Result<()> {
         let a = self.align.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(self.data_dir.join("align.json"), serde_json::to_vec_pretty(&a).unwrap_or_default());
+        write_atomic(&self.data_dir, "align.json", &json_bytes(&a)?).await
     }
 
-    async fn persist_notify(&self) {
+    async fn persist_notify(&self) -> io::Result<()> {
         let n = self.notify.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(self.data_dir.join("notifications.json"), serde_json::to_vec_pretty(&n).unwrap_or_default());
+        write_atomic(&self.data_dir, "notifications.json", &json_bytes(&n)?).await
     }
 
-    async fn persist_references(&self) {
+    async fn persist_references(&self) -> io::Result<()> {
         let list = self.references.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(self.data_dir.join("references.json"), serde_json::to_vec_pretty(&list).unwrap_or_default());
+        write_atomic(&self.data_dir, "references.json", &json_bytes(&list)?).await
     }
 
-    async fn persist_active_ref(&self) {
+    async fn persist_active_ref(&self) -> io::Result<()> {
         let id = self.active_ref.read().await.clone();
-        let path = self.data_dir.join("reference-active.json");
-        let _ = std::fs::create_dir_all(&self.data_dir);
         match id {
             Some(id) => {
-                let _ = std::fs::write(path, serde_json::to_vec(&json!({ "id": id })).unwrap_or_default());
+                write_atomic(
+                    &self.data_dir,
+                    "reference-active.json",
+                    &serde_json::to_vec(&json!({ "id": id })).map_err(io::Error::other)?,
+                )
+                .await
             }
-            None => {
-                let _ = std::fs::remove_file(path);
-            }
+            None => match tokio::fs::remove_file(self.data_dir.join("reference-active.json")).await {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            },
         }
     }
 
-    async fn persist_prerecord(&self) {
+    async fn persist_prerecord(&self) -> io::Result<()> {
         let c = self.prerecord.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(self.data_dir.join("prerecord.json"), serde_json::to_vec_pretty(&c).unwrap_or_default());
+        write_atomic(&self.data_dir, "prerecord.json", &json_bytes(&c)?).await
     }
 
     fn captures_dir(&self) -> PathBuf {
         self.data_dir.join("captures")
     }
 
-    async fn persist_auth(&self) {
+    async fn persist_auth(&self) -> io::Result<()> {
         let auth = self.auth.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
         if let Some(auth) = auth {
-            let _ = std::fs::write(self.data_dir.join("auth.json"), serde_json::to_vec_pretty(&auth).unwrap_or_default());
+            write_atomic(&self.data_dir, "auth.json", &json_bytes(&auth)?).await
+        } else {
+            Ok(())
         }
     }
 
-    async fn persist_alarms(&self) {
+    async fn persist_alarms(&self) -> io::Result<()> {
         let list = self.alarms.read().await.clone();
-        let _ = std::fs::create_dir_all(&self.data_dir);
-        let _ = std::fs::write(
-            self.data_dir.join("alarms.json"),
-            serde_json::to_vec_pretty(&list).unwrap_or_default(),
-        );
+        write_atomic(&self.data_dir, "alarms.json", &json_bytes(&list)?).await
     }
+}
+
+/// Write `bytes` to `dir/name` atomically: a temporary file in the same
+/// directory is renamed over the destination, so a crash or a full disk
+/// leaves either the old file or the new one, never a truncated file.
+async fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+    tokio::fs::create_dir_all(dir).await?;
+    let tmp = dir.join(format!(".{name}.{}.tmp", SEQ.fetch_add(1, Ordering::Relaxed)));
+    if let Err(e) = tokio::fs::write(&tmp, bytes).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, dir.join(name)).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn json_bytes<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
+    serde_json::to_vec_pretty(value).map_err(io::Error::other)
+}
+
+/// Turn a failed persistence write into an honest 500 so the caller does not
+/// report "saved" for state that will disappear on restart.
+fn persist_error(e: io::Error) -> (StatusCode, String) {
+    tracing::error!(error = %e, "failed to persist state");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("state was applied but could not be saved: {e}"),
+    )
 }
 
 /// Samples history and evaluates alarms once a second.
@@ -614,16 +639,33 @@ async fn new_session(st: &Arc<AppState>) -> String {
     token
 }
 
-fn session_response(token: String) -> Response {
-    Response::builder()
+/// True when the request reached us over TLS, including a reverse proxy that
+/// terminates TLS and advertises it via `X-Forwarded-Proto`.
+fn is_secure_request(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"))
+}
+
+fn session_cookie(token: &str, secure: bool) -> String {
+    format!(
+        "thermolink_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+fn session_response(token: String, secure: bool) -> Response {
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
-        .header(
-            header::SET_COOKIE,
-            format!("thermolink_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800"),
-        )
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"ok":true}"#))
-        .unwrap()
+        .header(header::SET_COOKIE, session_cookie(&token, secure))
+        .header(header::CONTENT_TYPE, "application/json");
+    if secure {
+        // A proxied TLS deployment should keep browsers on HTTPS.
+        builder = builder.header("strict-transport-security", "max-age=31536000");
+    }
+    builder.body(Body::from(r#"{"ok":true}"#)).unwrap()
 }
 
 async fn setup(
@@ -663,13 +705,18 @@ async fn setup(
         username: username.clone(),
         hash,
     });
-    st.persist_auth().await;
+    if let Err(e) = st.persist_auth().await {
+        *st.auth.write().await = None;
+        return Err(persist_error(e));
+    }
     tracing::info!(user = %username, "admin account created");
-    Ok(session_response(new_session(&st).await))
+    let secure = is_secure_request(&headers);
+    Ok(session_response(new_session(&st).await, secure))
 }
 
 async fn login(
     State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(c): Json<Credentials>,
 ) -> Result<Response, (StatusCode, String)> {
     let Some(auth) = st.auth.read().await.clone() else {
@@ -686,19 +733,22 @@ async fn login(
     {
         return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
     }
-    Ok(session_response(new_session(&st).await))
+    let secure = is_secure_request(&headers);
+    Ok(session_response(new_session(&st).await, secure))
 }
 
 async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Some(token) = session_token(&headers) {
         st.sessions.write().await.remove(&token);
     }
+    let secure = is_secure_request(&headers);
+    let cookie = format!(
+        "thermolink_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if secure { "; Secure" } else { "" }
+    );
     Response::builder()
         .status(StatusCode::OK)
-        .header(
-            header::SET_COOKIE,
-            "thermolink_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-        )
+        .header(header::SET_COOKIE, cookie)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"ok":true}"#))
         .unwrap()
@@ -824,7 +874,7 @@ async fn set_display(
     }
     if let Some(v) = patch.iso_bands { next.iso_bands = v; }
     *st.display.write().await = next.clone();
-    st.persist_display().await;
+    st.persist_display().await.map_err(persist_error)?;
     Ok(Json(next))
 }
 
@@ -1041,7 +1091,7 @@ async fn add_region(
         is_ref: false,
     };
     st.regions.write().await.push(region.clone());
-    st.persist_regions().await;
+    st.persist_regions().await.map_err(persist_error)?;
     let img = st.thermal_image().await;
     let stats = img.as_ref().and_then(|i| region_stats(i, &region));
     Ok(Json(json!({ "region": region, "stats": stats, "regions": st.regions.read().await.clone() })))
@@ -1058,14 +1108,16 @@ async fn delete_region(
         return Err((StatusCode::NOT_FOUND, "no such region".into()));
     }
     drop(regions);
-    st.persist_regions().await;
+    st.persist_regions().await.map_err(persist_error)?;
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn clear_regions(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn clear_regions(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     st.regions.write().await.clear();
-    st.persist_regions().await;
-    Json(json!({ "ok": true }))
+    st.persist_regions().await.map_err(persist_error)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn get_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -1112,7 +1164,7 @@ async fn add_alarm(
         dwell_s: req.dwell_s.min(3600),
     };
     st.alarms.write().await.push(alarm.clone());
-    st.persist_alarms().await;
+    st.persist_alarms().await.map_err(persist_error)?;
     Ok(Json(json!({ "alarm": alarm, "alarms": st.alarms.read().await.clone() })))
 }
 
@@ -1129,17 +1181,19 @@ async fn delete_alarm(
     drop(alarms);
     st.alarm_started.lock().await.remove(&id);
     st.alarm_active.lock().await.remove(&id);
-    st.persist_alarms().await;
+    st.persist_alarms().await.map_err(persist_error)?;
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn clear_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn clear_alarms(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     st.alarms.write().await.clear();
     st.alarm_started.lock().await.clear();
     st.alarm_active.lock().await.clear();
-    st.persist_alarms().await;
+    st.persist_alarms().await.map_err(persist_error)?;
     *st.last_alarm.write().await = None;
-    Json(json!({ "ok": true }))
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize)]
@@ -1187,8 +1241,8 @@ async fn add_reference(
     st.references.write().await.push(reference.clone());
     *st.reference.write().await = Some(vals);
     *st.active_ref.write().await = Some(id);
-    st.persist_references().await;
-    st.persist_active_ref().await;
+    st.persist_references().await.map_err(persist_error)?;
+    st.persist_active_ref().await.map_err(persist_error)?;
     Ok(Json(json!({ "ok": true, "id": reference.id })))
 }
 
@@ -1202,31 +1256,33 @@ async fn activate_reference(
     };
     *st.reference.write().await = Some(reference.vals);
     *st.active_ref.write().await = Some(reference.id);
-    st.persist_active_ref().await;
+    st.persist_active_ref().await.map_err(persist_error)?;
     Ok(Json(json!({ "ok": true })))
 }
 
 async fn delete_reference(
     State(st): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     st.references.write().await.retain(|r| r.id != id);
     if st.active_ref.read().await.as_deref() == Some(id.as_str()) {
         *st.reference.write().await = None;
         *st.active_ref.write().await = None;
     }
-    st.persist_references().await;
-    st.persist_active_ref().await;
-    Json(json!({ "ok": true }))
+    st.persist_references().await.map_err(persist_error)?;
+    st.persist_active_ref().await.map_err(persist_error)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
-async fn clear_references(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn clear_references(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     st.references.write().await.clear();
     *st.reference.write().await = None;
     *st.active_ref.write().await = None;
-    st.persist_references().await;
-    st.persist_active_ref().await;
-    Json(json!({ "ok": true }))
+    st.persist_references().await.map_err(persist_error)?;
+    st.persist_active_ref().await.map_err(persist_error)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize, Default)]
@@ -1411,20 +1467,22 @@ async fn set_reference(
         let mut next = display;
         next.dt_span = span;
         *st.display.write().await = next;
-        st.persist_display().await;
+        st.persist_display().await.map_err(persist_error)?;
     }
     let vals: Vec<u16> = img.values().collect();
     *st.reference.write().await = Some(vals);
     *st.active_ref.write().await = None;
-    st.persist_active_ref().await;
+    st.persist_active_ref().await.map_err(persist_error)?;
     Ok(Json(json!({ "ok": true, "at": now_secs() })))
 }
 
-async fn clear_reference(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn clear_reference(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     *st.reference.write().await = None;
     *st.active_ref.write().await = None;
-    st.persist_active_ref().await;
-    Json(json!({ "ok": true }))
+    st.persist_active_ref().await.map_err(persist_error)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn dt_image(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>) -> Response {
@@ -2009,15 +2067,15 @@ async fn get_prerecord(State(st): State<Arc<AppState>>) -> Json<PrerecordConfig>
 async fn set_prerecord(
     State(st): State<Arc<AppState>>,
     Json(next): Json<PrerecordConfig>,
-) -> Json<PrerecordConfig> {
+) -> Result<Json<PrerecordConfig>, (StatusCode, String)> {
     let cfg = PrerecordConfig {
         enabled: next.enabled,
         before_s: next.before_s.min(60),
         after_s: next.after_s.min(60),
     };
     *st.prerecord.write().await = cfg.clone();
-    st.persist_prerecord().await;
-    Json(cfg)
+    st.persist_prerecord().await.map_err(persist_error)?;
+    Ok(Json(cfg))
 }
 
 async fn list_captures(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -2092,7 +2150,7 @@ async fn get_align(State(st): State<Arc<AppState>>) -> Json<Align> {
 async fn set_align(
     State(st): State<Arc<AppState>>,
     Json(next): Json<Align>,
-) -> Json<Align> {
+) -> Result<Json<Align>, (StatusCode, String)> {
     let clamped = Align {
         x: next.x.clamp(-50.0, 50.0),
         y: next.y.clamp(-50.0, 50.0),
@@ -2102,8 +2160,8 @@ async fn set_align(
         flip_v: next.flip_v,
     };
     *st.align.write().await = clamped.clone();
-    st.persist_align().await;
-    Json(clamped)
+    st.persist_align().await.map_err(persist_error)?;
+    Ok(Json(clamped))
 }
 
 #[derive(Deserialize)]
@@ -2132,7 +2190,7 @@ async fn get_notify(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> 
 async fn set_notify(
     State(st): State<Arc<AppState>>,
     Json(req): Json<NotifyRequest>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let mut n = st.notify.write().await;
     let put = |slot: &mut Option<String>, value: Option<String>| {
         if let Some(v) = value {
@@ -2146,8 +2204,8 @@ async fn set_notify(
     put(&mut n.webhook, req.webhook);
     let status = notify_status(&n);
     drop(n);
-    st.persist_notify().await;
-    Json(status)
+    st.persist_notify().await.map_err(persist_error)?;
+    Ok(Json(status))
 }
 
 async fn send_notifications(st: &Arc<AppState>, text: &str) {
@@ -2199,15 +2257,15 @@ async fn version() -> Json<serde_json::Value> {
 async fn set_region_ref(
     State(st): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     {
         let mut regions = st.regions.write().await;
         for r in regions.iter_mut() {
             r.is_ref = r.id == id;
         }
     }
-    st.persist_regions().await;
-    Json(json!({ "ok": true }))
+    st.persist_regions().await.map_err(persist_error)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn regions_csv(
@@ -2461,4 +2519,62 @@ fn now_ms() -> u64 {
 
 fn round2(v: f32) -> f32 {
     (v * 100.0).round() / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secure_request_recognises_proxy_header() {
+        let mut headers = HeaderMap::new();
+        assert!(!is_secure_request(&headers));
+        headers.insert("x-forwarded-proto", "https, http".parse().unwrap());
+        assert!(is_secure_request(&headers));
+        headers.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert!(!is_secure_request(&headers));
+    }
+
+    #[test]
+    fn secure_cookie_only_when_tls_is_used() {
+        let plain = session_cookie("abc", false);
+        assert!(!plain.contains("Secure"));
+        let tls = session_cookie("abc", true);
+        assert!(tls.contains("; Secure"));
+        assert!(tls.contains("HttpOnly"));
+    }
+
+    #[tokio::test]
+    async fn atomic_write_replaces_the_previous_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "thermolink-persist-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        write_atomic(&dir, "state.json", b"{\"v\":1}").await.expect("first write");
+        write_atomic(&dir, "state.json", b"{\"v\":2}").await.expect("replace");
+        let body = tokio::fs::read_to_string(dir.join("state.json")).await.unwrap();
+        assert_eq!(body, "{\"v\":2}");
+        // No temporary file is left behind.
+        let mut entries = tokio::fs::read_dir(&dir).await.unwrap();
+        let mut names = Vec::new();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            names.push(entry.file_name().to_string_lossy().to_string());
+        }
+        assert_eq!(names, vec!["state.json".to_string()]);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn atomic_write_reports_a_failed_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "thermolink-persist-file-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        tokio::fs::write(&base, b"not a directory").await.unwrap();
+        let err = write_atomic(&base, "state.json", b"{}").await;
+        assert!(err.is_err(), "writing under a regular file must fail");
+        let _ = tokio::fs::remove_file(&base).await;
+    }
 }
