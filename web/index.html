@@ -430,7 +430,7 @@ window.addEventListener("pointermove", (e) => {
   const r = $("viewer").getBoundingClientRect();
   const vertical = state.anchor === "left" || state.anchor === "right";
   const p = vertical ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
-  state.split = Math.max(2, Math.min(98, p * 100));
+  state.split = Math.max(0, Math.min(100, p * 100));
   save("split", String(state.split));
   applyWipe();
 });
