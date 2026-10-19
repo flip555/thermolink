@@ -28,6 +28,8 @@ pub struct Region {
     pub name: String,
     pub kind: String,
     pub pts: Vec<[i32; 2]>,
+    #[serde(default, rename = "ref")]
+    pub is_ref: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -39,7 +41,34 @@ pub struct Alarm {
     pub dwell_s: u32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Align {
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub rot: f32,
+    pub flip_h: bool,
+    pub flip_v: bool,
+}
+
+impl Default for Align {
+    fn default() -> Self {
+        Self { x: 0.0, y: 0.0, scale: 1.0, rot: 0.0, flip_h: false, flip_v: false }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotifyConfig {
+    pub discord: Option<String>,
+    pub slack: Option<String>,
+    pub telegram_token: Option<String>,
+    pub telegram_chat: Option<String>,
+    pub webhook: Option<String>,
+}
+
+#[derive(Clone, Serialize, PartialEq)]
 pub struct Sample {
     pub t: u64,
     pub min_c: f32,
@@ -77,6 +106,8 @@ pub struct AppState {
     pub spec: CameraSpec,
     pub hub: FrameHub,
     pub display: RwLock<DisplaySettings>,
+    pub align: RwLock<Align>,
+    pub notify: RwLock<NotifyConfig>,
     pub calibration: RwLock<Calibration>,
     pub connected: Arc<AtomicBool>,
     pub source: String,
@@ -116,10 +147,24 @@ impl AppState {
             .ok()
             .and_then(|t| serde_json::from_str::<Vec<Alarm>>(&t).ok())
             .unwrap_or_default();
+        let display = std::fs::read_to_string(data_dir.join("display.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<DisplaySettings>(&t).ok())
+            .unwrap_or_default();
+        let align = std::fs::read_to_string(data_dir.join("align.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Align>(&t).ok())
+            .unwrap_or_default();
+        let notify = std::fs::read_to_string(data_dir.join("notifications.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<NotifyConfig>(&t).ok())
+            .unwrap_or_default();
         Self {
             spec,
             hub,
-            display: RwLock::new(DisplaySettings::default()),
+            display: RwLock::new(display),
+            align: RwLock::new(align),
+            notify: RwLock::new(notify),
             calibration: RwLock::new(calibration),
             connected,
             source,
@@ -160,6 +205,24 @@ impl AppState {
             self.data_dir.join("regions.json"),
             serde_json::to_vec_pretty(&list).unwrap_or_default(),
         );
+    }
+
+    async fn persist_display(&self) {
+        let d = self.display.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(self.data_dir.join("display.json"), serde_json::to_vec_pretty(&d).unwrap_or_default());
+    }
+
+    async fn persist_align(&self) {
+        let a = self.align.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(self.data_dir.join("align.json"), serde_json::to_vec_pretty(&a).unwrap_or_default());
+    }
+
+    async fn persist_notify(&self) {
+        let n = self.notify.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(self.data_dir.join("notifications.json"), serde_json::to_vec_pretty(&n).unwrap_or_default());
     }
 
     async fn persist_alarms(&self) {
@@ -241,6 +304,15 @@ async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats
             {
                 let _ = f.write_all(line.as_bytes());
             }
+            let text = format!(
+                "ThermoLink alarm: {} — {:.1}°C ({} {:.1}°C)",
+                alarm.name,
+                event["value_c"].as_f64().unwrap_or_default(),
+                alarm.kind,
+                alarm.threshold_c
+            );
+            let st2 = st.clone();
+            tokio::spawn(async move { send_notifications(&st2, &text).await; });
         }
     }
 }
@@ -257,10 +329,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/video.mjpg", get(video_mjpg))
         .route("/api/raw.h264", get(raw_h264))
         .route("/api/display", get(get_display).post(set_display))
+        .route("/api/align", get(get_align).post(set_align))
+        .route("/api/notify", get(get_notify).post(set_notify))
+        .route("/api/version", get(version))
+        .route("/api/regions.csv", get(regions_csv))
+        .route("/api/history.csv", get(history_csv))
         .route("/api/history.json", get(history_json))
         .route("/api/point", get(point))
         .route("/api/regions", get(get_regions).post(add_region).delete(clear_regions))
         .route("/api/regions/{id}", delete(delete_region))
+        .route("/api/regions/{id}/ref", post(set_region_ref))
         .route("/api/alarms", get(get_alarms).post(add_alarm).delete(clear_alarms))
         .route("/api/alarms/{id}", delete(delete_alarm))
         .route("/api/reference", post(set_reference).delete(clear_reference))
@@ -295,6 +373,7 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 
 async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let display = st.display.read().await.clone();
+    let align = st.align.read().await.clone();
     let calibration = *st.calibration.read().await;
     let has_reference = st.reference.read().await.is_some();
     let Some(frame) = st.hub.latest(StreamKind::Thermal).await else {
@@ -303,6 +382,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
             "connected": st.connected(),
             "video": st.video.is_some(),
             "display": display,
+            "align": align,
             "calibration": calibration,
             "palettes": PALETTES,
             "spec": st.spec,
@@ -335,6 +415,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
             "x": p.x, "y": p.y, "c": round2(p.celsius)
         })).collect::<Vec<_>>(),
         "display": display,
+        "align": align,
         "calibration": calibration,
         "palettes": PALETTES,
         "has_reference": has_reference,
@@ -357,6 +438,7 @@ async fn set_display(
         ));
     }
     *st.display.write().await = next.clone();
+    st.persist_display().await;
     Ok(Json(next))
 }
 
@@ -479,10 +561,13 @@ async fn point(
 async fn get_regions(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let regions = st.regions.read().await.clone();
     let img = st.thermal_image().await;
-    let stats: Vec<_> = img
+    let mut stats: Vec<serde_json::Value> = img
         .as_ref()
         .map(|i| regions.iter().filter_map(|r| region_stats(i, r)).collect())
         .unwrap_or_default();
+    if let Some(img) = img.as_ref() {
+        attach_deltas(img, &regions, &mut stats);
+    }
     Json(json!({ "regions": regions, "stats": stats }))
 }
 
@@ -515,6 +600,7 @@ async fn add_region(
         },
         kind: req.kind,
         pts: req.pts,
+        is_ref: false,
     };
     st.regions.write().await.push(region.clone());
     st.persist_regions().await;
@@ -779,6 +865,191 @@ async fn snapshot_file(
         Ok(bytes) => jpeg_response(bytes),
         Err(_) => (StatusCode::NOT_FOUND, "no such snapshot").into_response(),
     }
+}
+
+async fn get_align(State(st): State<Arc<AppState>>) -> Json<Align> {
+    Json(st.align.read().await.clone())
+}
+
+async fn set_align(
+    State(st): State<Arc<AppState>>,
+    Json(next): Json<Align>,
+) -> Json<Align> {
+    let clamped = Align {
+        x: next.x.clamp(-50.0, 50.0),
+        y: next.y.clamp(-50.0, 50.0),
+        scale: next.scale.clamp(0.25, 4.0),
+        rot: next.rot.rem_euclid(360.0),
+        flip_h: next.flip_h,
+        flip_v: next.flip_v,
+    };
+    *st.align.write().await = clamped.clone();
+    st.persist_align().await;
+    Json(clamped)
+}
+
+#[derive(Deserialize)]
+struct NotifyRequest {
+    discord: Option<String>,
+    slack: Option<String>,
+    telegram_token: Option<String>,
+    telegram_chat: Option<String>,
+    webhook: Option<String>,
+}
+
+fn notify_status(n: &NotifyConfig) -> serde_json::Value {
+    json!({
+        "discord": n.discord.is_some(),
+        "slack": n.slack.is_some(),
+        "telegram": n.telegram_token.is_some() && n.telegram_chat.is_some(),
+        "webhook": n.webhook.is_some(),
+    })
+}
+
+async fn get_notify(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let n = st.notify.read().await;
+    Json(notify_status(&n))
+}
+
+async fn set_notify(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<NotifyRequest>,
+) -> Json<serde_json::Value> {
+    let mut n = st.notify.write().await;
+    let put = |slot: &mut Option<String>, value: Option<String>| {
+        if let Some(v) = value {
+            *slot = if v.trim().is_empty() { None } else { Some(v.trim().to_string()) };
+        }
+    };
+    put(&mut n.discord, req.discord);
+    put(&mut n.slack, req.slack);
+    put(&mut n.telegram_token, req.telegram_token);
+    put(&mut n.telegram_chat, req.telegram_chat);
+    put(&mut n.webhook, req.webhook);
+    let status = notify_status(&n);
+    drop(n);
+    st.persist_notify().await;
+    Json(status)
+}
+
+async fn send_notifications(st: &Arc<AppState>, text: &str) {
+    let cfg = st.notify.read().await.clone();
+    if cfg.discord.is_none()
+        && cfg.slack.is_none()
+        && cfg.webhook.is_none()
+        && (cfg.telegram_token.is_none() || cfg.telegram_chat.is_none())
+    {
+        return;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .unwrap_or_default();
+
+    if let Some(url) = cfg.discord.as_deref() {
+        if let Err(e) = client.post(url).json(&json!({ "content": text })).send().await {
+            tracing::warn!(error = %e, "discord notification failed");
+        }
+    }
+    if let Some(url) = cfg.slack.as_deref() {
+        if let Err(e) = client.post(url).json(&json!({ "text": text })).send().await {
+            tracing::warn!(error = %e, "slack notification failed");
+        }
+    }
+    if let (Some(token), Some(chat)) = (cfg.telegram_token.as_deref(), cfg.telegram_chat.as_deref()) {
+        let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+        if let Err(e) = client
+            .post(url)
+            .json(&json!({ "chat_id": chat, "text": text }))
+            .send()
+            .await
+        {
+            tracing::warn!(error = %e, "telegram notification failed");
+        }
+    }
+    if let Some(url) = cfg.webhook.as_deref() {
+        if let Err(e) = client.post(url).json(&json!({ "text": text })).send().await {
+            tracing::warn!(error = %e, "webhook notification failed");
+        }
+    }
+}
+
+async fn version() -> Json<serde_json::Value> {
+    Json(json!({ "name": "thermolink", "version": env!("CARGO_PKG_VERSION") }))
+}
+
+async fn set_region_ref(
+    State(st): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Json<serde_json::Value> {
+    {
+        let mut regions = st.regions.write().await;
+        for r in regions.iter_mut() {
+            r.is_ref = r.id == id;
+        }
+    }
+    st.persist_regions().await;
+    Json(json!({ "ok": true }))
+}
+
+async fn regions_csv(State(st): State<Arc<AppState>>) -> Response {
+    let regions = st.regions.read().await.clone();
+    let img = st.thermal_image().await;
+    let mut stats: Vec<serde_json::Value> = img
+        .as_ref()
+        .map(|i| regions.iter().filter_map(|r| region_stats(i, r)).collect())
+        .unwrap_or_default();
+    if let Some(img) = img.as_ref() {
+        attach_deltas(img, &regions, &mut stats);
+    }
+    let mut out = String::from("id,name,kind,n,min_c,avg_c,max_c,delta_c\n");
+    for s in &stats {
+        out.push_str(&format!(
+            "{},{},{},{},{:.2},{:.2},{:.2},{}\n",
+            s["id"].as_str().unwrap_or(""),
+            s["name"].as_str().unwrap_or("").replace(',', " "),
+            s["kind"].as_str().unwrap_or(""),
+            s["n"].as_u64().unwrap_or(0),
+            s["min_c"].as_f64().unwrap_or(0.0),
+            s["avg_c"].as_f64().unwrap_or(0.0),
+            s["max_c"].as_f64().unwrap_or(0.0),
+            s["delta_c"].as_f64().map(|v| format!("{v:.2}")).unwrap_or_default(),
+        ));
+    }
+    text_response(out, "text/csv; charset=utf-8")
+}
+
+async fn history_csv(State(st): State<Arc<AppState>>) -> Response {
+    let samples = st.history.tail(3600).await;
+    let mut out = String::from("t,min_c,max_c,mean_c\n");
+    for s in samples {
+        out.push_str(&format!("{},{:.2},{:.2},{:.2}\n", s.t, s.min_c, s.max_c, s.mean_c));
+    }
+    text_response(out, "text/csv; charset=utf-8")
+}
+
+fn attach_deltas(img: &ThermalImage, regions: &[Region], stats: &mut [serde_json::Value]) {
+    let base = regions
+        .iter()
+        .find(|r| r.is_ref)
+        .and_then(|r| region_stats(img, r))
+        .and_then(|s| s["avg_c"].as_f64());
+    if let Some(base) = base {
+        for s in stats.iter_mut() {
+            if let Some(avg) = s["avg_c"].as_f64() {
+                s["delta_c"] = json!(round2((avg - base) as f32));
+            }
+        }
+    }
+}
+
+fn text_response(body: String, content_type: &'static str) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(body))
+        .unwrap()
 }
 
 fn region_stats(img: &ThermalImage, region: &Region) -> Option<serde_json::Value> {

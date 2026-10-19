@@ -28,7 +28,7 @@
   .stagecol{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
   .viewer{position:relative;flex:1 1 auto;min-height:0;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
   .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block}
-  #vis{object-fit:cover}
+  #vis{object-fit:cover;transform:translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
   #dtimg{display:none}
   .viewer.thermal #vis{visibility:hidden}
   .viewer.visible #feed{display:none}
@@ -179,6 +179,15 @@
         <button data-anchor="bottom">Thermal bottom</button>
       </div>
       <div class="hint">Drag the divider on the image to move the split.</div>
+      <h2>Align visible</h2>
+      <div class="row">
+        <button data-nudge="0,-1">▲</button><button data-nudge="-1,0">◀</button>
+        <button data-nudge="1,0">▶</button><button data-nudge="0,1">▼</button>
+        <button id="rot90">Rotate</button><button id="fliph">Flip H</button>
+        <button id="flipv">Flip V</button><button id="alignReset">Reset</button>
+      </div>
+      <label class="f">Scale <input id="alignScale" type="range" min="0.5" max="2" step="0.01" value="1" style="width:100%"></label>
+      <div class="hint" id="alignState"></div>
       <h2>Hot spots</h2>
       <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
@@ -187,7 +196,8 @@
       <h2>Measurements</h2>
       <div class="hint" style="margin:0">Click for a point, drag for a box. Saved on the server.</div>
       <ul class="list" id="regions"><li><span class="grow">No measurements</span></li></ul>
-      <div class="row" style="margin-top:10px"><button id="clearRegions">Clear all</button></div>
+      <div class="row" style="margin-top:10px"><button id="clearRegions">Clear all</button>
+        <a class="hint" href="/api/regions.csv" target="_blank" rel="noreferrer">CSV</a></div>
       <h2>Probe</h2>
       <div class="kv" id="probe"><span>Point</span><span>–</span></div>
     </div>
@@ -205,6 +215,15 @@
       <label class="f">Name <input id="alarmName" type="text" placeholder="optional" style="width:100%"></label>
       <div class="row" style="margin-top:10px"><button class="primary" id="addAlarm">Add alarm</button></div>
       <div class="hint" id="alarmState"></div>
+      <h2>Notifications</h2>
+      <div class="hint" id="notifyState">none configured</div>
+      <label class="f">Discord <input id="notifyDiscord" placeholder="webhook URL" style="width:100%"></label>
+      <label class="f">Slack <input id="notifySlack" placeholder="webhook URL" style="width:100%"></label>
+      <label class="f">Telegram token <input id="notifyTgToken" type="password" placeholder="bot token" style="width:100%"></label>
+      <label class="f">Telegram chat <input id="notifyTgChat" placeholder="chat id" style="width:100%"></label>
+      <label class="f">Webhook <input id="notifyHook" placeholder="https://…" style="width:100%"></label>
+      <div class="row" style="margin-top:8px"><button id="notifySave">Save</button><button id="notifyClear">Clear all</button></div>
+      <div class="hint">Blank fields are unchanged. Stored server-side; values are never returned.</div>
       <h2>Last event</h2>
       <div class="kv" id="lastAlarm"><span>—</span><span>none</span></div>
     </div>
@@ -229,6 +248,7 @@
         <span>Frame</span><span id="seq">–</span>
         <span>Link</span><span id="link">–</span>
         <span>Video</span><span id="vlink">–</span>
+        <span>Version</span><span id="ver">–</span>
       </div>
       <h2>Calibration</h2>
       <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
@@ -251,8 +271,16 @@ const $ = (id) => document.getElementById(id);
 const state = {
   unit: "C", display: null, initialized: false, palettes: [], mode: "thermal",
   w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false,
-  split: 50, anchor: "left", feedStarted: false, visStarted: false
+  split: 50, anchor: "left", feedStarted: false, visStarted: false,
+  align: {x:0,y:0,scale:1,rot:0,flip_h:false,flip_v:false}
 };
+
+const saved = (k, d) => { try { const v = localStorage.getItem("thermolink." + k); return v === null ? d : v; } catch(e) { return d; } };
+const save = (k, v) => { try { localStorage.setItem("thermolink." + k, v); } catch(e) {} };
+state.unit = saved("unit", "C");
+state.mode = saved("mode", "thermal");
+state.anchor = saved("anchor", "left");
+state.dt = saved("dt", "0") === "1";
 
 function fmt(c) {
   if (c === null || c === undefined || Number.isNaN(c)) return "–";
@@ -266,8 +294,9 @@ for (const b of $("tabs").children) {
     for (const x of $("tabs").children) x.classList.toggle("active", x === b);
     for (const p of document.querySelectorAll(".tabpanel")) p.classList.toggle("active", p.id === "tab-" + b.dataset.tab);
     if (b.dataset.tab === "measure") loadRegions();
-    if (b.dataset.tab === "alarms") loadAlarms();
+    if (b.dataset.tab === "alarms") { loadAlarms(); loadNotify(); }
     if (b.dataset.tab === "capture") listSnaps();
+    save("tab", b.dataset.tab);
   };
 }
 function applyWipe() {
@@ -280,13 +309,42 @@ function applyWipe() {
 for (const b of $("modes").children) {
   b.onclick = () => {
     state.mode = b.dataset.mode;
+    save("mode", state.mode);
     for (const x of $("modes").children) x.classList.toggle("active", x === b);
     applyWipe();
   };
 }
 for (const b of $("anchors").children) {
-  b.onclick = () => { state.anchor = b.dataset.anchor; applyWipe(); };
+  b.onclick = () => { state.anchor = b.dataset.anchor; save("anchor", state.anchor); applyWipe(); };
 }
+
+function applyAlign(a) {
+  state.align = a;
+  const v = $("viewer");
+  v.style.setProperty("--ax", a.x + "%");
+  v.style.setProperty("--ay", a.y + "%");
+  v.style.setProperty("--as", a.scale);
+  v.style.setProperty("--ar", a.rot + "deg");
+  v.style.setProperty("--fh", a.flip_h ? -1 : 1);
+  v.style.setProperty("--fv", a.flip_v ? -1 : 1);
+  if (document.activeElement !== $("alignScale")) $("alignScale").value = a.scale;
+}
+async function saveAlign(patch) {
+  const next = Object.assign({}, state.align, patch);
+  const r = await fetch("/api/align", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(next) });
+  if (r.ok) { applyAlign(await r.json()); $("alignState").textContent = `${state.align.x}%, ${state.align.y}% · ${state.align.scale.toFixed(2)}× · ${state.align.rot}°`; }
+}
+for (const b of document.querySelectorAll("#tab-display button[data-nudge]")) {
+  b.onclick = () => {
+    const [dx,dy] = b.dataset.nudge.split(",").map(Number);
+    saveAlign({ x: state.align.x + dx, y: state.align.y + dy });
+  };
+}
+$("rot90").onclick = () => saveAlign({ rot: (state.align.rot + 90) % 360 });
+$("fliph").onclick = () => saveAlign({ flip_h: !state.align.flip_h });
+$("flipv").onclick = () => saveAlign({ flip_v: !state.align.flip_v });
+$("alignReset").onclick = () => saveAlign({ x:0, y:0, scale:1, rot:0, flip_h:false, flip_v:false });
+$("alignScale").oninput = (e) => saveAlign({ scale: Number(e.target.value) });
 
 // Drag the divider directly.
 let wipeDrag = false;
@@ -327,7 +385,7 @@ async function setDisplay(patch) {
 const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Number($(id).value)) ? Number($(id).value) : null);
 $("apply").onclick = () => setDisplay({ clip_lo:numOrNull("clipLo"), clip_hi:numOrNull("clipHi"), span_lo:numOrNull("spanLo"), span_hi:numOrNull("spanHi") });
 $("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value=""; setDisplay({clip_lo:null,clip_hi:null,span_lo:null,span_hi:null}); };
-$("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; $("unit").textContent = "°"+state.unit; poll(); };
+$("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; save("unit", state.unit); $("unit").textContent = "°"+state.unit; poll(); };
 
 function fillDisplay(d) {
   if (!d) return;
@@ -403,13 +461,21 @@ async function loadRegions() {
     const d = await (await fetch("/api/regions")).json();
     state.regions = d.stats || [];
     drawRegions();
+    const ref = (d.regions || []).find(r => r.ref);
     $("regions").innerHTML = state.regions.length
-      ? state.regions.map(r =>
-          `<li><span class="grow">${r.name}</span><span class="val">${fmt(r.min_c)} / ${fmt(r.avg_c)} / ${fmt(r.max_c)}</span>` +
-          `<button class="x" data-id="${r.id}">×</button></li>`).join("")
+      ? state.regions.map(r => {
+          const delta = r.delta_c === undefined ? "" : ` Δ${r.delta_c>=0?"+":""}${r.delta_c.toFixed(1)}`;
+          return `<li><span class="grow">${r.name}${ref && ref.id===r.id ? " ★" : ""}</span>` +
+            `<span class="val">${fmt(r.min_c)} / ${fmt(r.avg_c)} / ${fmt(r.max_c)}${delta}</span>` +
+            `<button class="x" data-ref="${r.id}" title="set reference">★</button>` +
+            `<button class="x" data-id="${r.id}">×</button></li>`;
+        }).join("")
       : "<li><span class='grow'>No measurements</span></li>";
     for (const b of $("regions").querySelectorAll("button[data-id]")) {
       b.onclick = async () => { await fetch("/api/regions/"+b.dataset.id,{method:"DELETE"}); loadRegions(); };
+    }
+    for (const b of $("regions").querySelectorAll("button[data-ref]")) {
+      b.onclick = async () => { await fetch("/api/regions/"+b.dataset.ref+"/ref",{method:"POST"}); loadRegions(); };
     }
   } catch (e) {}
 }
@@ -450,6 +516,33 @@ $("addAlarm").onclick = async () => {
   if (r.ok) loadAlarms();
 };
 
+// ---- notifications -----------------------------------------------------
+async function loadNotify() {
+  try {
+    const d = await (await fetch("/api/notify")).json();
+    const on = [];
+    if (d.discord) on.push("Discord");
+    if (d.slack) on.push("Slack");
+    if (d.telegram) on.push("Telegram");
+    if (d.webhook) on.push("Webhook");
+    $("notifyState").textContent = on.length ? "configured: " + on.join(", ") : "none configured";
+  } catch(e) {}
+}
+$("notifySave").onclick = async () => {
+  const body = {};
+  const map = { notifyDiscord:"discord", notifySlack:"slack", notifyTgToken:"telegram_token", notifyTgChat:"telegram_chat", notifyHook:"webhook" };
+  for (const [id,key] of Object.entries(map)) { const v = $(id).value.trim(); if (v) body[key] = v; }
+  const r = await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  $("notifyState").textContent = r.ok ? "saved" : "error: " + (await r.text());
+  if (r.ok) { for (const id of Object.keys(map)) $(id).value = ""; loadNotify(); }
+};
+$("notifyClear").onclick = async () => {
+  const body = { discord:"", slack:"", telegram_token:"", telegram_chat:"", webhook:"" };
+  await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  for (const id of ["notifyDiscord","notifySlack","notifyTgToken","notifyTgChat","notifyHook"]) $(id).value = "";
+  loadNotify();
+};
+
 // ---- capture / reference ----------------------------------------------
 $("snap").onclick = $("snapTop").onclick = async () => {
   $("snapState").textContent = "saving…";
@@ -465,7 +558,7 @@ async function listSnaps() {
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
 $("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELETE"}); $("dtStats").innerHTML="<span>ΔT</span><span>no reference</span>"; };
 $("dtToggle").onchange = (e) => {
-  state.dt = e.target.checked;
+  state.dt = e.target.checked; save("dt", state.dt ? "1" : "0");
   $("viewer").className = "viewer " + state.mode + (state.dt ? " dt" : "");
   if (state.dt) refreshDt();
 };
@@ -553,6 +646,7 @@ async function poll() {
     if (d.palettes) paintPalettes(d.palettes,(d.display||{}).palette);
     if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized=true; }
     if (d.calibration && document.activeElement!==$("calScale")) { $("calScale").value=d.calibration.scale; $("calOffset").value=d.calibration.offset; }
+    if (d.align) applyAlign(d.align);
     if (ready && !state.feedStarted) {
       state.feedStarted = true;
       $("feed").src = "/api/thermal.mjpg?t=" + Date.now();
@@ -583,6 +677,8 @@ $("vis").onerror = () => {
 };
 
 applyWipe();
+fetch("/api/version").then(r=>r.json()).then(d=>{ $("ver").textContent = d.version || "–"; }).catch(()=>{});
+
 poll(); setInterval(poll, 1000);
 loadHistory(); setInterval(loadHistory, 2000);
 loadRegions(); setInterval(loadRegions, 5000);
