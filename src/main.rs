@@ -155,6 +155,7 @@ async fn serve(
     ));
 
     tokio::spawn(camera_supervisor(driver, hub.clone(), connected));
+    server::spawn_monitor(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind)
         .await

@@ -193,3 +193,53 @@ mod tests {
         assert!(jpeg.len() > 500);
     }
 }
+
+/// Signed difference image: blue = colder than the reference, white = same,
+/// red = hotter, clamped to +/- `span_c`.
+pub fn render_dt(img: &ThermalImage, reference: &[u16], span_c: f32) -> Vec<u8> {
+    let n = img.pixel_count();
+    let mut rgb = vec![0u8; n * 3];
+    let span = if span_c.abs() < 0.01 { 1.0 } else { span_c.abs() };
+    for (i, v) in img.values().enumerate() {
+        let Some(&r) = reference.get(i) else {
+            rgb[i * 3..i * 3 + 3].copy_from_slice(&[255, 255, 255]);
+            continue;
+        };
+        let d = (v as f32 - r as f32) * img.calibration.scale;
+        let t = (d / span).clamp(-1.0, 1.0);
+        let colour = if t < 0.0 {
+            let k = 1.0 + t; // 0 at -span, 1 at zero
+            [
+                (255.0 * k) as u8,
+                (255.0 * k) as u8,
+                255,
+            ]
+        } else {
+            [
+                255,
+                (255.0 * (1.0 - t)) as u8,
+                (255.0 * (1.0 - t)) as u8,
+            ]
+        };
+        rgb[i * 3..i * 3 + 3].copy_from_slice(&colour);
+    }
+    rgb
+}
+
+pub fn dt_jpeg(
+    img: &ThermalImage,
+    reference: &[u16],
+    span_c: f32,
+    quality: u8,
+) -> anyhow::Result<Vec<u8>> {
+    let rgb = render_dt(img, reference, span_c);
+    let mut out = Vec::new();
+    let encoder = jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100));
+    encoder.encode(
+        &rgb,
+        img.width as u16,
+        img.height as u16,
+        jpeg_encoder::ColorType::Rgb,
+    )?;
+    Ok(out)
+}

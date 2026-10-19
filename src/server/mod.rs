@@ -1,25 +1,77 @@
 //! HTTP surface. Deliberately imports `camera` and `render`, never a driver.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::camera::{Calibration, CameraSpec, FramePayload, StreamKind, ThermalImage};
-use crate::render::{render_jpeg, DisplaySettings, PALETTES};
+use crate::render::{dt_jpeg, render_jpeg, DisplaySettings, PALETTES};
 use crate::stream::FrameHub;
 use crate::video::VideoTranscoder;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Region {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub pts: Vec<[i32; 2]>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Alarm {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub threshold_c: f32,
+    pub dwell_s: u32,
+}
+
+#[derive(Clone, Serialize)]
+pub struct Sample {
+    pub t: u64,
+    pub min_c: f32,
+    pub max_c: f32,
+    pub mean_c: f32,
+}
+
+pub struct History {
+    buf: RwLock<VecDeque<Sample>>,
+}
+
+impl History {
+    fn new() -> Self {
+        Self {
+            buf: RwLock::new(VecDeque::with_capacity(3600)),
+        }
+    }
+
+    async fn push(&self, sample: Sample) {
+        let mut buf = self.buf.write().await;
+        if buf.len() >= 3600 {
+            buf.pop_front();
+        }
+        buf.push_back(sample);
+    }
+
+    async fn tail(&self, limit: usize) -> Vec<Sample> {
+        let buf = self.buf.read().await;
+        let skip = buf.len().saturating_sub(limit);
+        buf.iter().skip(skip).cloned().collect()
+    }
+}
 
 pub struct AppState {
     pub spec: CameraSpec,
@@ -30,6 +82,13 @@ pub struct AppState {
     pub source: String,
     pub video: Option<VideoTranscoder>,
     pub data_dir: PathBuf,
+    pub history: Arc<History>,
+    pub regions: RwLock<Vec<Region>>,
+    pub alarms: RwLock<Vec<Alarm>>,
+    alarm_started: Mutex<HashMap<String, Instant>>,
+    alarm_active: Mutex<HashSet<String>>,
+    pub last_alarm: RwLock<Option<serde_json::Value>>,
+    pub reference: RwLock<Option<Vec<u16>>>,
 }
 
 impl AppState {
@@ -49,6 +108,14 @@ impl AppState {
                 offset: c.offset,
             })
             .unwrap_or_default();
+        let regions = std::fs::read_to_string(data_dir.join("regions.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Vec<Region>>(&t).ok())
+            .unwrap_or_default();
+        let alarms = std::fs::read_to_string(data_dir.join("alarms.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Vec<Alarm>>(&t).ok())
+            .unwrap_or_default();
         Self {
             spec,
             hub,
@@ -58,6 +125,13 @@ impl AppState {
             source,
             video,
             data_dir,
+            history: Arc::new(History::new()),
+            regions: RwLock::new(regions),
+            alarms: RwLock::new(alarms),
+            alarm_started: Mutex::new(HashMap::new()),
+            alarm_active: Mutex::new(HashSet::new()),
+            last_alarm: RwLock::new(None),
+            reference: RwLock::new(None),
         }
     }
 
@@ -65,7 +139,6 @@ impl AppState {
         self.connected.load(Ordering::Relaxed)
     }
 
-    /// Latest thermal frame with the server's active calibration applied.
     pub async fn thermal_image(&self) -> Option<ThermalImage> {
         let frame = self.hub.latest(StreamKind::Thermal).await?;
         let img = frame.thermal()?.clone();
@@ -78,6 +151,97 @@ impl AppState {
 
     fn snapshots_dir(&self) -> PathBuf {
         self.data_dir.join("snapshots")
+    }
+
+    async fn persist_regions(&self) {
+        let list = self.regions.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(
+            self.data_dir.join("regions.json"),
+            serde_json::to_vec_pretty(&list).unwrap_or_default(),
+        );
+    }
+
+    async fn persist_alarms(&self) {
+        let list = self.alarms.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(
+            self.data_dir.join("alarms.json"),
+            serde_json::to_vec_pretty(&list).unwrap_or_default(),
+        );
+    }
+}
+
+/// Samples history and evaluates alarms once a second.
+pub fn spawn_monitor(st: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let Some(img) = st.thermal_image().await else {
+                continue;
+            };
+            let stats = img.stats();
+            st.history
+                .push(Sample {
+                    t: now_secs(),
+                    min_c: round2(stats.min_c),
+                    max_c: round2(stats.max_c),
+                    mean_c: round2(stats.mean_c),
+                })
+                .await;
+            evaluate_alarms(&st, &stats).await;
+        }
+    });
+}
+
+async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats) {
+    let alarms = st.alarms.read().await.clone();
+    let mut started = st.alarm_started.lock().await;
+    let mut active = st.alarm_active.lock().await;
+
+    for alarm in &alarms {
+        let condition = match alarm.kind.as_str() {
+            "below" => stats.min_c <= alarm.threshold_c,
+            _ => stats.max_c >= alarm.threshold_c,
+        };
+        if !condition {
+            started.remove(&alarm.id);
+            active.remove(&alarm.id);
+            continue;
+        }
+        let since = *started.entry(alarm.id.clone()).or_insert_with(Instant::now);
+        if since.elapsed() >= Duration::from_secs(alarm.dwell_s as u64)
+            && active.insert(alarm.id.clone())
+        {
+            let event = json!({
+                "id": alarm.id,
+                "name": alarm.name,
+                "kind": alarm.kind,
+                "threshold_c": alarm.threshold_c,
+                "value_c": if alarm.kind == "below" { stats.min_c } else { stats.max_c },
+                "at": now_secs(),
+            });
+            *st.last_alarm.write().await = Some(event.clone());
+            let line = format!(
+                "{}\t{}\t{}\t{:.2}C\n",
+                now_secs(),
+                alarm.name,
+                alarm.kind,
+                event["value_c"].as_f64().unwrap_or_default()
+            );
+            let dir = st.data_dir.clone();
+            let _ = std::fs::create_dir_all(&dir);
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("alarms.log"))
+            {
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
     }
 }
 
@@ -93,8 +257,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/video.mjpg", get(video_mjpg))
         .route("/api/raw.h264", get(raw_h264))
         .route("/api/display", get(get_display).post(set_display))
+        .route("/api/history.json", get(history_json))
         .route("/api/point", get(point))
-        .route("/api/region", post(region))
+        .route("/api/regions", get(get_regions).post(add_region).delete(clear_regions))
+        .route("/api/regions/{id}", delete(delete_region))
+        .route("/api/alarms", get(get_alarms).post(add_alarm).delete(clear_alarms))
+        .route("/api/alarms/{id}", delete(delete_alarm))
+        .route("/api/reference", post(set_reference).delete(clear_reference))
+        .route("/api/dt.jpg", get(dt_image))
+        .route("/api/dt.json", get(dt_json))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
         .route("/api/snapshot", post(snapshot))
         .route("/api/snapshots", get(list_snapshots))
@@ -125,6 +296,7 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let display = st.display.read().await.clone();
     let calibration = *st.calibration.read().await;
+    let has_reference = st.reference.read().await.is_some();
     let Some(frame) = st.hub.latest(StreamKind::Thermal).await else {
         return Json(json!({
             "ready": false,
@@ -133,6 +305,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
             "calibration": calibration,
             "palettes": PALETTES,
             "spec": st.spec,
+            "has_reference": false,
         }));
     };
     let Some(img) = frame.thermal() else {
@@ -162,6 +335,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
         "display": display,
         "calibration": calibration,
         "palettes": PALETTES,
+        "has_reference": has_reference,
         "spec": st.spec,
     }))
 }
@@ -237,7 +411,6 @@ async fn video_mjpg(State(st): State<Arc<AppState>>) -> Response {
     mjpeg_response(stream)
 }
 
-/// Raw visible stream passthrough for clients that decode H.264 themselves.
 async fn raw_h264(State(st): State<Arc<AppState>>) -> Response {
     let mut rx = st.hub.subscribe();
     let stream = async_stream::stream! {
@@ -259,6 +432,23 @@ async fn raw_h264(State(st): State<Arc<AppState>>) -> Response {
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from_stream(stream))
         .unwrap()
+}
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    #[serde(default = "default_history_limit")]
+    limit: usize,
+}
+
+fn default_history_limit() -> usize {
+    600
+}
+
+async fn history_json(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<HistoryQuery>,
+) -> Json<serde_json::Value> {
+    Json(json!({ "samples": st.history.tail(q.limit.min(3600)).await }))
 }
 
 #[derive(Deserialize)]
@@ -284,58 +474,186 @@ async fn point(
     })))
 }
 
-#[derive(Deserialize)]
-struct RegionRequest {
-    pts: Vec<[i32; 2]>,
-    #[serde(default)]
-    name: String,
+async fn get_regions(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let regions = st.regions.read().await.clone();
+    let img = st.thermal_image().await;
+    let stats: Vec<_> = img
+        .as_ref()
+        .map(|i| regions.iter().filter_map(|r| region_stats(i, r)).collect())
+        .unwrap_or_default();
+    Json(json!({ "regions": regions, "stats": stats }))
 }
 
-async fn region(
+#[derive(Deserialize)]
+struct RegionRequest {
+    #[serde(default)]
+    name: String,
+    #[serde(default = "default_kind")]
+    kind: String,
+    pts: Vec<[i32; 2]>,
+}
+
+fn default_kind() -> String {
+    "rect".into()
+}
+
+async fn add_region(
     State(st): State<Arc<AppState>>,
     Json(req): Json<RegionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    if req.pts.len() < 2 {
-        return Err((StatusCode::BAD_REQUEST, "need two corners".into()));
+    if req.pts.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "region has no points".into()));
     }
+    let region = Region {
+        id: format!("{}", now_secs() * 1000 + (now_ms() % 1000)),
+        name: if req.name.is_empty() {
+            format!("{:?} {},{}", req.kind, req.pts[0][0], req.pts[0][1])
+        } else {
+            req.name
+        },
+        kind: req.kind,
+        pts: req.pts,
+    };
+    st.regions.write().await.push(region.clone());
+    st.persist_regions().await;
+    let img = st.thermal_image().await;
+    let stats = img.as_ref().and_then(|i| region_stats(i, &region));
+    Ok(Json(json!({ "region": region, "stats": stats, "regions": st.regions.read().await.clone() })))
+}
+
+async fn delete_region(
+    State(st): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Json<serde_json::Value> {
+    st.regions.write().await.retain(|r| r.id != id);
+    st.persist_regions().await;
+    Json(json!({ "ok": true }))
+}
+
+async fn clear_regions(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    st.regions.write().await.clear();
+    st.persist_regions().await;
+    Json(json!({ "ok": true }))
+}
+
+async fn get_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(json!({
+        "alarms": st.alarms.read().await.clone(),
+        "last_alarm": st.last_alarm.read().await.clone(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct AlarmRequest {
+    #[serde(default)]
+    name: String,
+    #[serde(default = "default_alarm_kind")]
+    kind: String,
+    threshold_c: f32,
+    #[serde(default)]
+    dwell_s: u32,
+}
+
+fn default_alarm_kind() -> String {
+    "above".into()
+}
+
+async fn add_alarm(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<AlarmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !(-200.0..=500.0).contains(&req.threshold_c) {
+        return Err((StatusCode::BAD_REQUEST, "implausible threshold".into()));
+    }
+    let alarm = Alarm {
+        id: format!("a{}", now_secs() * 1000 + (now_ms() % 1000)),
+        name: if req.name.is_empty() {
+            format!("{} {:.0}C", req.kind, req.threshold_c)
+        } else {
+            req.name
+        },
+        kind: if req.kind == "below" { "below".into() } else { "above".into() },
+        threshold_c: req.threshold_c,
+        dwell_s: req.dwell_s.min(3600),
+    };
+    st.alarms.write().await.push(alarm.clone());
+    st.persist_alarms().await;
+    Ok(Json(json!({ "alarm": alarm, "alarms": st.alarms.read().await.clone() })))
+}
+
+async fn delete_alarm(
+    State(st): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Json<serde_json::Value> {
+    st.alarms.write().await.retain(|a| a.id != id);
+    st.persist_alarms().await;
+    Json(json!({ "ok": true }))
+}
+
+async fn clear_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    st.alarms.write().await.clear();
+    st.persist_alarms().await;
+    *st.last_alarm.write().await = None;
+    Json(json!({ "ok": true }))
+}
+
+async fn set_reference(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let img = st
         .thermal_image()
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
-    let (w, h) = (img.width as i32, img.height as i32);
-    let x0 = req.pts[0][0].min(req.pts[1][0]).clamp(0, w - 1);
-    let x1 = req.pts[0][0].max(req.pts[1][0]).clamp(0, w - 1);
-    let y0 = req.pts[0][1].min(req.pts[1][1]).clamp(0, h - 1);
-    let y1 = req.pts[0][1].max(req.pts[1][1]).clamp(0, h - 1);
-
-    let mut min = f32::MAX;
-    let mut max = f32::MIN;
-    let mut sum = 0.0f32;
-    let mut n = 0u32;
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            if let Some(c) = img.celsius_at(x as u32, y as u32) {
-                min = min.min(c);
-                max = max.max(c);
-                sum += c;
-                n += 1;
-            }
-        }
-    }
-    if n == 0 {
-        return Err((StatusCode::BAD_REQUEST, "empty region".into()));
-    }
-    Ok(Json(json!({
-        "name": req.name,
-        "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-        "n": n,
-        "min_c": round2(min),
-        "max_c": round2(max),
-        "avg_c": round2(sum / n as f32),
-    })))
+    let vals: Vec<u16> = img.values().collect();
+    *st.reference.write().await = Some(vals);
+    Ok(Json(json!({ "ok": true, "at": now_secs() })))
 }
 
-#[derive(Deserialize, serde::Serialize)]
+async fn clear_reference(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    *st.reference.write().await = None;
+    Json(json!({ "ok": true }))
+}
+
+async fn dt_image(State(st): State<Arc<AppState>>) -> Response {
+    let Some(img) = st.thermal_image().await else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet").into_response();
+    };
+    let Some(reference) = st.reference.read().await.clone() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no reference frame").into_response();
+    };
+    match dt_jpeg(&img, &reference, 5.0, 85) {
+        Ok(jpeg) => jpeg_response(jpeg),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn dt_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let img = st.thermal_image().await;
+    let reference = st.reference.read().await.clone();
+    let (Some(img), Some(reference)) = (img, reference) else {
+        return Json(json!({ "ready": false }));
+    };
+    let mut min = f32::MAX;
+    let mut max = f32::MIN;
+    let mut sum = 0.0;
+    let mut n = 0;
+    for (i, v) in img.values().enumerate() {
+        if let Some(&r) = reference.get(i) {
+            let d = (v as f32 - r as f32) * img.calibration.scale;
+            min = min.min(d);
+            max = max.max(d);
+            sum += d;
+            n += 1;
+        }
+    }
+    Json(json!({
+        "ready": n > 0,
+        "min_c": round2(if n > 0 { min } else { 0.0 }),
+        "max_c": round2(if n > 0 { max } else { 0.0 }),
+        "avg_c": round2(if n > 0 { sum / n as f32 } else { 0.0 }),
+        "n": n,
+    }))
+}
+
+#[derive(Deserialize, Serialize)]
 struct CalibrationFile {
     scale: f32,
     offset: f32,
@@ -349,7 +667,6 @@ async fn get_calibration(State(st): State<Arc<AppState>>) -> Json<Calibration> {
 struct CalibrationRequest {
     scale: Option<f32>,
     offset: Option<f32>,
-    /// Two `(raw, true_celsius)` pairs for a two-point fit.
     points: Option<[[f32; 2]; 2]>,
 }
 
@@ -413,6 +730,7 @@ async fn snapshot(
         "stats": stats,
         "calibration": img.calibration,
         "display": display,
+        "regions": st.regions.read().await.clone(),
         "w": img.width, "h": img.height,
     });
     std::fs::write(
@@ -461,6 +779,82 @@ async fn snapshot_file(
     }
 }
 
+fn region_stats(img: &ThermalImage, region: &Region) -> Option<serde_json::Value> {
+    let pts = &region.pts;
+    if pts.is_empty() {
+        return None;
+    }
+    let xs: Vec<i32> = pts.iter().map(|p| p[0]).collect();
+    let ys: Vec<i32> = pts.iter().map(|p| p[1]).collect();
+    let x0 = xs.iter().copied().min()?.clamp(0, img.width as i32 - 1);
+    let x1 = xs.iter().copied().max()?.clamp(0, img.width as i32 - 1);
+    let y0 = ys.iter().copied().min()?.clamp(0, img.height as i32 - 1);
+    let y1 = ys.iter().copied().max()?.clamp(0, img.height as i32 - 1);
+
+    let mut min = f32::MAX;
+    let mut max = f32::MIN;
+    let mut sum = 0.0;
+    let mut n = 0u32;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            if !inside(region, x, y) {
+                continue;
+            }
+            if let Some(c) = img.celsius_at(x as u32, y as u32) {
+                min = min.min(c);
+                max = max.max(c);
+                sum += c;
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    Some(json!({
+        "id": region.id,
+        "name": region.name,
+        "kind": region.kind,
+        "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+        "n": n,
+        "min_c": round2(min),
+        "max_c": round2(max),
+        "avg_c": round2(sum / n as f32),
+    }))
+}
+
+fn inside(region: &Region, x: i32, y: i32) -> bool {
+    let pts = &region.pts;
+    match region.kind.as_str() {
+        "point" => pts.first().is_some_and(|p| p[0] == x && p[1] == y),
+        "poly" if pts.len() >= 3 => {
+            let mut inside = false;
+            let mut j = pts.len() - 1;
+            for i in 0..pts.len() {
+                let (xi, yi) = (pts[i][0], pts[i][1]);
+                let (xj, yj) = (pts[j][0], pts[j][1]);
+                if (yi > y) != (yj > y)
+                    && x < (xj - xi) * (y - yi) / (yj - yi).max(1) + xi
+                {
+                    inside = !inside;
+                }
+                j = i;
+            }
+            inside
+        }
+        _ => {
+            if pts.len() < 2 {
+                return false;
+            }
+            let x0 = pts[0][0].min(pts[1][0]);
+            let x1 = pts[0][0].max(pts[1][0]);
+            let y0 = pts[0][1].min(pts[1][1]);
+            let y1 = pts[0][1].max(pts[1][1]);
+            x0 <= x && x <= x1 && y0 <= y && y <= y1
+        }
+    }
+}
+
 fn multipart_head(jpeg: &[u8]) -> String {
     format!(
         "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
@@ -490,6 +884,20 @@ where
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from_stream(stream))
         .unwrap()
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn round2(v: f32) -> f32 {

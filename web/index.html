@@ -6,72 +6,101 @@
 <title>ThermoLink</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230b0d10'/%3E%3Ccircle cx='8' cy='10' r='3' fill='%23ff9f1a'/%3E%3Crect x='6.9' y='2.5' width='2.2' height='6.5' rx='1.1' fill='%23ff9f1a'/%3E%3C/svg%3E">
 <style>
-  :root{color-scheme:dark}
+  :root{color-scheme:dark;--bg:#0a0c0f;--card:#11161d;--line:#1e242c;--muted:#8b949e;--text:#e6e8eb;--hot:#ff9f1a;--cold:#7fd1ff;--ok:#30a46c;--err:#e5484d;--accent:#1f6feb}
   *{box-sizing:border-box}
-  body{margin:0;background:#0b0d10;color:#e6e8eb;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-  header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #1e242c;
-         position:sticky;top:0;background:#0b0d10e6;backdrop-filter:blur(8px);z-index:20;flex-wrap:wrap}
-  header h1{font-size:15px;margin:0 8px 0 0;font-weight:650}
-  .dot{width:9px;height:9px;border-radius:50%;background:#e5484d}
-  .dot.on{background:#30a46c;box-shadow:0 0 8px #30a46c88}
-  .src{color:#8b949e;font:12px ui-monospace,Menlo,monospace}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  button,select,input{font:13px system-ui,sans-serif;color:var(--text);background:#1a212a;border:1px solid #2b3542;border-radius:7px;padding:6px 9px}
+  button{cursor:pointer}button:hover{background:#232c37}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .top{display:flex;align-items:center;gap:10px;height:52px;padding:0 14px;border-bottom:1px solid var(--line);background:#0a0c0fee;flex-wrap:nowrap}
+  .brand{font-weight:700;letter-spacing:.2px;font-size:15px;white-space:nowrap}
+  .brand small{font-weight:400;color:var(--muted);font-size:11px;margin-left:7px}
+  .status{display:flex;align-items:center;gap:6px;min-width:0}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--err);flex:none}
+  .dot.on{background:var(--ok);box-shadow:0 0 7px #30a46c99}
+  .src{color:var(--muted);font:11px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px}
+  .seg{display:flex;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px;margin-left:6px}
+  .seg button{border:0;background:transparent;padding:5px 9px;font-size:12px;border-radius:6px;color:#9aa4b2}
+  .seg button.active{background:var(--accent);color:#fff}
   .spacer{margin-left:auto}
-  .modes{display:flex;gap:4px;background:#12171e;border:1px solid #1e242c;border-radius:8px;padding:3px}
-  .modes button{border:0;background:transparent;padding:5px 9px;font-size:12px;border-radius:6px;color:#9aa4b2}
-  .modes button.active{background:#1f6feb;color:#fff}
-  main{max-width:1380px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
-  @media (max-width:1000px){main{grid-template-columns:1fr}}
-  .viewer{position:relative;background:#000;border:1px solid #1e242c;border-radius:12px;overflow:hidden;aspect-ratio:16/9;touch-action:none}
-  #vis,#feed{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block}
+  .shell{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:12px;padding:12px;height:calc(100dvh - 52px)}
+  .stagecol{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+  .viewer{position:relative;flex:1 1 auto;min-height:0;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
+  .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block}
+  #vis{object-fit:cover}
+  #dtimg{display:none}
   .viewer.thermal #vis{visibility:hidden}
   .viewer.visible #feed{display:none}
-  .viewer.wipe #feed{clip-path:inset(0 0 0 50%)}
-  .viewer.pip #feed{inset:auto 12px 12px auto;width:30%;height:auto;border:1px solid #3a4553;border-radius:8px;box-shadow:0 6px 24px #000a}
+  .viewer.dt #feed{display:none}.viewer.dt #dtimg{display:block}
+  .viewer.wipe #feed{clip-path:inset(0 0 0 var(--split,50%))}
+  .viewer.pip #feed{inset:auto 14px 14px auto;width:30%;height:auto;border:1px solid #3a4553;border-radius:8px;box-shadow:0 6px 24px #000a}
   .viewer.fusion #feed{opacity:.55}
-  .waiting{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#0b0d10;color:#8b949e;font-size:13px;text-align:center;padding:24px}
+  #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .region{fill:#ffd16618;stroke:#ffd166;stroke-width:.7;vector-effect:non-scaling-stroke}
+  .regionlbl{fill:#ffd166;font:4px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.8}
+  .readout{position:absolute;left:12px;bottom:12px;display:flex;gap:16px;background:#080a0dd9;border:1px solid #2b3542;border-radius:9px;padding:7px 12px;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);pointer-events:none;z-index:4}
+  .readout span{display:block;color:var(--muted);font-size:9px;letter-spacing:.1em}
+  .readout b{font-size:16px;font-variant-numeric:tabular-nums}
+  .readout .max b{color:var(--hot)}.readout .min b{color:var(--cold)}
+  #hot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #000a;display:none;pointer-events:none;z-index:3}
+  #sel{position:absolute;border:1px solid #ffd166;background:#ffd16622;display:none;pointer-events:none;z-index:5}
+  .badge{position:absolute;top:10px;left:10px;background:#080a0dd9;border:1px solid #2b3542;border-radius:999px;padding:3px 9px;font:10px ui-monospace,Menlo,monospace;color:#c8d1dc;z-index:4}
+  .waiting{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:var(--bg);color:var(--muted);font-size:13px;text-align:center;padding:24px;z-index:6}
   .waiting.show{display:flex}
-  .readout{position:absolute;left:12px;bottom:12px;display:flex;gap:15px;background:#080a0dd0;border:1px solid #2b3542;
-           border-radius:9px;padding:7px 11px;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);pointer-events:none}
-  .readout span{display:block;color:#8b949e;font-size:10px;letter-spacing:.08em}
-  .readout b{font-size:15px;font-variant-numeric:tabular-nums}
-  .readout .max b{color:#ff9f1a}.readout .min b{color:#7fd1ff}
-  #hot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #fff;border-radius:50%;
-       box-shadow:0 0 0 2px #000a;display:none;pointer-events:none}
-  #sel{position:absolute;border:1px solid #ffd166;background:#ffd16622;display:none;pointer-events:none}
-  .badge{position:absolute;top:10px;left:10px;background:#080a0dd0;border:1px solid #2b3542;border-radius:999px;
-         padding:4px 9px;font:11px ui-monospace,Menlo,monospace;color:#c8d1dc;pointer-events:none}
-  aside{display:flex;flex-direction:column;gap:10px}
-  .card{background:#12171e;border:1px solid #1e242c;border-radius:11px;padding:12px 13px}
-  .card h2{margin:0 0 9px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#8b949e;font-weight:600}
-  .row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-  button,select,input{font:13px system-ui,sans-serif;color:#e6e8eb;background:#1a212a;border:1px solid #2b3542;border-radius:7px;padding:6px 9px}
-  button{cursor:pointer}button:hover{background:#232c37}
-  button.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+  .banner{position:absolute;left:0;right:0;top:0;display:none;align-items:center;gap:10px;padding:8px 12px;background:#4a1414ee;border-bottom:1px solid #a33;font-size:12px;z-index:7}
+  .banner.show{display:flex}
+  .banner b{color:#ffb4b4}
+  .chartcard{flex:0 0 158px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;min-height:0}
+  .charthead{display:flex;justify-content:space-between;font:10px ui-monospace,Menlo,monospace;color:var(--muted);letter-spacing:.08em;margin-bottom:4px}
+  #chart{width:100%;flex:1;min-height:0;display:block}
+  .rail{background:var(--card);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .tabs{display:flex;border-bottom:1px solid var(--line);flex:none;overflow-x:auto}
+  .tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:9px 10px;font-size:11px;color:#9aa4b2;white-space:nowrap}
+  .tabs button.active{color:#fff;border-bottom-color:var(--accent)}
+  .tabpanel{display:none;padding:12px;overflow-y:auto;flex:1;min-height:0}
+  .tabpanel.active{display:block}
+  h2{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 9px}
+  h2:not(:first-child){margin-top:18px}
   .pals{display:grid;grid-template-columns:1fr 1fr;gap:6px}
   .pals button{padding:6px;font-size:12px}
-  label.f{display:flex;align-items:center;gap:7px;color:#c8d1dc;font-size:12px;margin-top:8px}
-  label.f input{width:92px;padding:5px 7px}
+  .pals button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  label.f{display:flex;align-items:center;gap:8px;color:#c8d1dc;font-size:12px;margin-top:8px}
+  label.f input{width:96px;padding:5px 7px}
   label.f .hint{margin-left:auto;color:#5c6673;font-size:11px}
-  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;color:#c8d1dc}
-  .kv span:nth-child(odd){color:#8b949e}
-  .peaks{margin:6px 0 0;padding:0;list-style:none;font:12px ui-monospace,Menlo,monospace;color:#c8d1dc}
-  .peaks li{display:flex;justify-content:space-between;padding:3px 0;border-top:1px solid #1b222b}
-  .peaks li:first-child{border-top:0}
-  .ok{color:#30a46c}.err{color:#e5484d}.warn{color:#e5a83d}
-  a.btn{display:inline-block;text-decoration:none;background:#1a212a;border:1px solid #2b3542;border-radius:7px;padding:6px 9px;color:#e6e8eb;font-size:12px}
-  a.btn:hover{background:#232c37}
+  .row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
   .hint{color:#5c6673;font-size:11px;margin-top:7px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;font-size:12px;color:#c8d1dc}
+  .kv span:nth-child(odd){color:var(--muted)}
+  .list{margin:8px 0 0;padding:0;list-style:none}
+  .list li{display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid #1b222b;font-size:12px}
+  .list li:first-child{border-top:0}
+  .list .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .list .val{font:11px ui-monospace,Menlo,monospace;color:#c8d1dc}
+  .x{border:0;background:transparent;color:#5c6673;padding:2px 5px;font-size:14px;line-height:1}
+  .x:hover{color:var(--err);background:transparent}
+  .peaks{margin:0;padding:0;list-style:none;font:12px ui-monospace,Menlo,monospace;color:#c8d1dc}
+  .peaks li{display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid #1b222b}
+  .peaks li:first-child{border-top:0}
+  .ok{color:var(--ok)}.err{color:var(--err)}.warn{color:#e5a83d}
   .snaps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-  .snaps a{font:11px ui-monospace,Menlo,monospace;color:#7fd1ff;text-decoration:none;border:1px solid #24303d;border-radius:5px;padding:2px 5px}
-  footer{max-width:1380px;margin:0 auto;padding:0 16px 20px;color:#5c6673;font-size:11px}
+  .snaps a{font:11px ui-monospace,Menlo,monospace;color:var(--cold);text-decoration:none;border:1px solid #24303d;border-radius:5px;padding:2px 5px}
+  .snaps a:hover{border-color:var(--accent)}
+  @media (max-width:1000px){
+    body{overflow:auto}
+    .shell{grid-template-columns:1fr;height:auto}
+    .viewer{aspect-ratio:4/3;flex:none}
+    .rail{max-height:none}
+    .tabpanel{max-height:none}
+    .src{max-width:140px}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>ThermoLink</h1>
-  <div class="dot" id="dot"></div>
-  <div class="src" id="source">connecting…</div>
-  <div class="modes" id="modes">
+<header class="top">
+  <div class="brand">ThermoLink <small id="mdl">connecting…</small></div>
+  <div class="status"><span class="dot" id="dot"></span><span class="src" id="source">connecting…</span></div>
+  <div class="seg" id="modes">
     <button data-mode="thermal" class="active">Thermal</button>
     <button data-mode="visible">Visible</button>
     <button data-mode="wipe">Wipe</button>
@@ -79,81 +108,128 @@
     <button data-mode="fusion">Fusion</button>
   </div>
   <div class="spacer"></div>
-  <div class="src" id="unitLabel">°C</div>
-  <button id="unit">Switch to °F</button>
-  <button id="snap">Snapshot</button>
+  <button id="unit">°C</button>
+  <button id="snapTop" class="primary">Snapshot</button>
 </header>
 
-<main>
-  <section class="viewer thermal" id="viewer">
-    <img id="vis" alt="visible view" src="/api/video.mjpg">
-    <img id="feed" alt="thermal view" src="/api/thermal.mjpg">
-    <div class="badge" id="badge">waiting for frames</div>
-    <div class="waiting show" id="waiting">No thermal frames yet.<br>Check the camera connection.</div>
-    <div class="readout">
-      <div class="min"><span>MIN</span><b id="tmin">–</b></div>
-      <div><span>MEAN</span><b id="tmean">–</b></div>
-      <div class="max"><span>MAX</span><b id="tmax">–</b></div>
-    </div>
-    <div id="hot"></div>
-    <div id="sel"></div>
-  </section>
+<div class="shell">
+  <div class="stagecol">
+    <section class="viewer thermal" id="viewer">
+      <img id="vis" alt="visible">
+      <img id="feed" alt="thermal">
+      <img id="dtimg" alt="difference">
+      <svg id="overlay" viewBox="0 0 160 120" preserveAspectRatio="none"></svg>
+      <div class="banner" id="banner"><span>ALARM</span><b id="bannerText"></b><span class="spacer"></span><button class="x" id="dismiss">×</button></div>
+      <div class="badge" id="badge">waiting</div>
+      <div class="waiting show" id="waiting">No thermal frames yet.<br>Check the camera connection.</div>
+      <div class="readout">
+        <div class="min"><span>MIN</span><b id="tmin">–</b></div>
+        <div><span>MEAN</span><b id="tmean">–</b></div>
+        <div class="max"><span>MAX</span><b id="tmax">–</b></div>
+      </div>
+      <div id="hot"></div>
+      <div id="sel"></div>
+    </section>
+    <section class="chartcard">
+      <div class="charthead"><span>TEMPERATURE HISTORY</span><span id="chartRange">60 min</span></div>
+      <canvas id="chart"></canvas>
+    </section>
+  </div>
 
-  <aside>
-    <div class="card">
+  <aside class="rail">
+    <nav class="tabs" id="tabs">
+      <button data-tab="display" class="active">Display</button>
+      <button data-tab="measure">Measure</button>
+      <button data-tab="alarms">Alarms</button>
+      <button data-tab="capture">Capture</button>
+      <button data-tab="camera">Camera</button>
+    </nav>
+
+    <div class="tabpanel active" id="tab-display">
       <h2>Palette</h2>
       <div class="pals" id="pals"></div>
-    </div>
-
-    <div class="card">
       <h2>Bands</h2>
       <label class="f">Clip low <input id="clipLo" type="number" step="0.5" placeholder="off"><span class="hint">shown</span></label>
       <label class="f">Clip high <input id="clipHi" type="number" step="0.5" placeholder="off"><span class="hint">shown</span></label>
       <label class="f">Span low <input id="spanLo" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
       <label class="f">Span high <input id="spanHi" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
-      <div class="row" style="margin-top:9px"><button id="apply">Apply</button><button id="reset">Reset</button></div>
+      <div class="row" style="margin-top:10px"><button id="apply">Apply</button><button id="reset">Reset</button></div>
       <div class="hint" id="bandState"></div>
+      <h2>Wipe split</h2>
+      <label class="f">Position <input id="split" type="range" min="5" max="95" value="50" style="width:100%"></label>
+      <h2>Hot spots</h2>
+      <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
 
-    <div class="card">
-      <h2>Measure</h2>
-      <div class="hint" style="margin:0">Click a point, or drag a box on the thermal view.</div>
-      <div class="kv" id="measure" style="margin-top:8px"><span>–</span><span>no measurement</span></div>
+    <div class="tabpanel" id="tab-measure">
+      <h2>Measurements</h2>
+      <div class="hint" style="margin:0">Click for a point, drag for a box. Saved on the server.</div>
+      <ul class="list" id="regions"><li><span class="grow">No measurements</span></li></ul>
+      <div class="row" style="margin-top:10px"><button id="clearRegions">Clear all</button></div>
+      <h2>Probe</h2>
+      <div class="kv" id="probe"><span>Point</span><span>–</span></div>
     </div>
 
-    <div class="card">
+    <div class="tabpanel" id="tab-alarms">
+      <h2>Alarms</h2>
+      <ul class="list" id="alarms"><li><span class="grow">No alarms</span></li></ul>
+      <h2>Add alarm</h2>
+      <div class="row">
+        <select id="alarmKind"><option value="above">Above</option><option value="below">Below</option></select>
+        <input id="alarmC" type="number" step="0.5" value="45" style="width:80px">
+        <span class="hint">°C</span>
+      </div>
+      <label class="f">Dwell <input id="alarmDwell" type="number" min="0" value="3" style="width:70px"><span class="hint">seconds</span></label>
+      <label class="f">Name <input id="alarmName" type="text" placeholder="optional" style="width:100%"></label>
+      <div class="row" style="margin-top:10px"><button class="primary" id="addAlarm">Add alarm</button></div>
+      <div class="hint" id="alarmState"></div>
+      <h2>Last event</h2>
+      <div class="kv" id="lastAlarm"><span>—</span><span>none</span></div>
+    </div>
+
+    <div class="tabpanel" id="tab-capture">
+      <h2>Snapshots</h2>
+      <div class="row"><button class="primary" id="snap">Save snapshot</button><a class="hint" href="/api/snapshots" target="_blank" rel="noreferrer">JSON</a></div>
+      <div class="hint" id="snapState"></div>
+      <div class="snaps" id="snaps"></div>
+      <h2>Difference (ΔT)</h2>
+      <div class="row"><button id="setRef">Set reference</button><button id="clearRef">Clear</button></div>
+      <label class="f"><input type="checkbox" id="dtToggle" style="width:auto"> Show ΔT image</label>
+      <div class="kv" id="dtStats" style="margin-top:8px"><span>ΔT</span><span>no reference</span></div>
+    </div>
+
+    <div class="tabpanel" id="tab-camera">
+      <h2>Source</h2>
+      <div class="kv">
+        <span>Driver</span><span id="drv">–</span>
+        <span>Model</span><span id="cmodel">–</span>
+        <span>Thermal</span><span id="res">–</span>
+        <span>Frame</span><span id="seq">–</span>
+        <span>Link</span><span id="link">–</span>
+        <span>Video</span><span id="vlink">–</span>
+      </div>
       <h2>Calibration</h2>
       <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
       <label class="f">Offset <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
       <div class="row" style="margin-top:9px"><button id="calApply">Apply</button><button id="calFactory">Factory</button></div>
       <div class="hint" id="calState"></div>
-    </div>
-
-    <div class="card">
-      <h2>Hot spots</h2>
-      <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
-    </div>
-
-    <div class="card">
-      <h2>Source</h2>
-      <div class="kv">
-        <span>Driver</span><span id="drv">–</span>
-        <span>Model</span><span id="mdl">–</span>
-        <span>Thermal</span><span id="res">–</span>
-        <span>Frame</span><span id="seq">–</span>
-        <span>Link</span><span id="link">–</span>
+      <h2>Endpoints</h2>
+      <div class="hint" style="line-height:1.7">
+        /api/thermal.jpg · /api/thermal.mjpg<br>
+        /api/video.jpg · /api/video.mjpg<br>
+        /api/history.json · /api/regions<br>
+        /api/alarms · /api/reference · /api/dt.jpg
       </div>
-      <div class="hint" id="snapState"></div>
-      <div class="snaps" id="snaps"></div>
     </div>
   </aside>
-</main>
-
-<footer>ThermoLink · 16-bit radiometric data rendered server-side · <span id="foot">—</span></footer>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { unit: "C", display: null, initialized: false, palettes: [], mode: "thermal", w: 160, h: 120 };
+const state = {
+  unit: "C", display: null, initialized: false, palettes: [], mode: "thermal",
+  w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false
+};
 
 function fmt(c) {
   if (c === null || c === undefined || Number.isNaN(c)) return "–";
@@ -161,19 +237,30 @@ function fmt(c) {
   return v.toFixed(1) + "°" + state.unit;
 }
 
+// ---- tabs / modes ------------------------------------------------------
+for (const b of $("tabs").children) {
+  b.onclick = () => {
+    for (const x of $("tabs").children) x.classList.toggle("active", x === b);
+    for (const p of document.querySelectorAll(".tabpanel")) p.classList.toggle("active", p.id === "tab-" + b.dataset.tab);
+    if (b.dataset.tab === "measure") loadRegions();
+    if (b.dataset.tab === "alarms") loadAlarms();
+    if (b.dataset.tab === "capture") listSnaps();
+  };
+}
 for (const b of $("modes").children) {
   b.onclick = () => {
     state.mode = b.dataset.mode;
     for (const x of $("modes").children) x.classList.toggle("active", x === b);
-    $("viewer").className = "viewer " + state.mode;
+    $("viewer").className = "viewer " + state.mode + (state.mode !== "dt" && state.dt ? " dt" : "");
   };
 }
+$("split").oninput = (e) => document.documentElement.style.setProperty("--split", e.target.value + "%");
 
+// ---- display -----------------------------------------------------------
 function paintPalettes(list, current) {
   if (!list || !list.length) return;
   if (!state.palettes.length) {
-    state.palettes = list;
-    $("pals").innerHTML = "";
+    state.palettes = list; $("pals").innerHTML = "";
     for (const name of list) {
       const b = document.createElement("button");
       b.textContent = name; b.dataset.pal = name;
@@ -183,157 +270,260 @@ function paintPalettes(list, current) {
   }
   for (const b of $("pals").children) b.classList.toggle("active", b.dataset.pal === current);
 }
-
 async function setDisplay(patch) {
   const next = Object.assign({}, state.display || {}, patch);
-  const r = await fetch("/api/display", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
-  if (r.ok) {
-    state.display = await r.json();
-    paintPalettes(state.palettes, state.display.palette);
-    $("bandState").textContent = "applied";
-    setTimeout(() => $("bandState").textContent = "", 1200);
-  } else $("bandState").textContent = "error: " + (await r.text());
+  const r = await fetch("/api/display", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(next) });
+  if (r.ok) { state.display = await r.json(); paintPalettes(state.palettes, state.display.palette); $("bandState").textContent = "applied"; setTimeout(()=>$("bandState").textContent="",1200); }
+  else $("bandState").textContent = "error: " + (await r.text());
 }
-
 const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Number($(id).value)) ? Number($(id).value) : null);
-$("apply").onclick = () => setDisplay({ clip_lo: numOrNull("clipLo"), clip_hi: numOrNull("clipHi"), span_lo: numOrNull("spanLo"), span_hi: numOrNull("spanHi") });
-$("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value = ""; setDisplay({ clip_lo:null, clip_hi:null, span_lo:null, span_hi:null }); };
-$("unit").onclick = () => {
-  state.unit = state.unit === "C" ? "F" : "C";
-  $("unitLabel").textContent = "°" + state.unit;
-  $("unit").textContent = state.unit === "C" ? "Switch to °F" : "Switch to °C";
-  poll();
-};
+$("apply").onclick = () => setDisplay({ clip_lo:numOrNull("clipLo"), clip_hi:numOrNull("clipHi"), span_lo:numOrNull("spanLo"), span_hi:numOrNull("spanHi") });
+$("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value=""; setDisplay({clip_lo:null,clip_hi:null,span_lo:null,span_hi:null}); };
+$("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; $("unit").textContent = "°"+state.unit; poll(); };
 
 function fillDisplay(d) {
   if (!d) return;
   state.display = d; paintPalettes(state.palettes, d.palette);
-  const map = { clipLo:d.clip_lo, clipHi:d.clip_hi, spanLo:d.span_lo, spanHi:d.span_hi };
+  const map = {clipLo:d.clip_lo, clipHi:d.clip_hi, spanLo:d.span_lo, spanHi:d.span_hi};
   for (const [id,val] of Object.entries(map)) { const el=$(id); if (document.activeElement!==el) el.value = val===null?"":val; }
 }
 
 // ---- measurement -------------------------------------------------------
-let drag = null;
 const viewer = $("viewer");
+let drag = null;
 function toThermal(e) {
   const r = viewer.getBoundingClientRect();
-  const x = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width));
-  const y = Math.max(0, Math.min(0.999, (e.clientY - r.top) / r.height));
-  return [Math.floor(x * state.w), Math.floor(y * state.h)];
+  const x = Math.max(0, Math.min(0.999, (e.clientX-r.left)/r.width));
+  const y = Math.max(0, Math.min(0.999, (e.clientY-r.top)/r.height));
+  return [Math.floor(x*state.w), Math.floor(y*state.h)];
 }
 viewer.addEventListener("pointerdown", (e) => {
-  if (state.mode === "visible" || state.mode === "pip") return;
+  if (state.mode === "visible") return;
   drag = toThermal(e);
   const r = viewer.getBoundingClientRect();
-  $("sel").style.display = "block";
-  $("sel").style.left = (e.clientX - r.left) + "px";
-  $("sel").style.top = (e.clientY - r.top) + "px";
-  $("sel").style.width = "0px"; $("sel").style.height = "0px";
+  $("sel").style.display="block";
+  $("sel").style.left=(e.clientX-r.left)+"px"; $("sel").style.top=(e.clientY-r.top)+"px";
+  $("sel").style.width="0px"; $("sel").style.height="0px";
   viewer.setPointerCapture(e.pointerId);
 });
 viewer.addEventListener("pointermove", (e) => {
   if (!drag) return;
   const r = viewer.getBoundingClientRect();
-  const x = e.clientX - r.left, y = e.clientY - r.top;
-  const x0 = drag[0] / state.w * r.width, y0 = drag[1] / state.h * r.height;
-  $("sel").style.left = Math.min(x0, x) + "px";
-  $("sel").style.top = Math.min(y0, y) + "px";
-  $("sel").style.width = Math.abs(x - x0) + "px";
-  $("sel").style.height = Math.abs(y - y0) + "px";
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  const x0=drag[0]/state.w*r.width, y0=drag[1]/state.h*r.height;
+  $("sel").style.left=Math.min(x0,x)+"px"; $("sel").style.top=Math.min(y0,y)+"px";
+  $("sel").style.width=Math.abs(x-x0)+"px"; $("sel").style.height=Math.abs(y-y0)+"px";
 });
 viewer.addEventListener("pointerup", async (e) => {
   if (!drag) return;
-  const start = drag; drag = null;
-  $("sel").style.display = "none";
-  const end = toThermal(e);
-  if (Math.abs(end[0]-start[0]) < 3 && Math.abs(end[1]-start[1]) < 3) {
+  const start=drag; drag=null; $("sel").style.display="none";
+  const end=toThermal(e);
+  if (Math.abs(end[0]-start[0])<3 && Math.abs(end[1]-start[1])<3) {
     const r = await fetch(`/api/point?x=${start[0]}&y=${start[1]}`);
-    if (r.ok) {
-      const d = await r.json();
-      $("measure").innerHTML = `<span>Point ${d.x},${d.y}</span><span>${fmt(d.c)}</span>`;
-    }
+    if (r.ok) { const d=await r.json(); $("probe").innerHTML=`<span>Point ${d.x},${d.y}</span><span>${fmt(d.c)}</span>`; }
   } else {
-    const r = await fetch("/api/region", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name:"box", pts:[start,end] }) });
-    if (r.ok) {
-      const d = await r.json();
-      $("measure").innerHTML =
-        `<span>Box ${d.x1-d.x0+1}×${d.y1-d.y0+1}</span><span>${d.n} px</span>` +
-        `<span>Min</span><span>${fmt(d.min_c)}</span>` +
-        `<span>Mean</span><span>${fmt(d.avg_c)}</span>` +
-        `<span>Max</span><span>${fmt(d.max_c)}</span>`;
-    }
+    await fetch("/api/regions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ kind:"rect", pts:[start,end] }) });
+    loadRegions();
   }
 });
 
+function drawRegions() {
+  const svg = $("overlay");
+  svg.setAttribute("viewBox", `0 0 ${state.w} ${state.h}`);
+  svg.innerHTML = "";
+  for (const s of state.regions) {
+    let el;
+    if (s.kind === "point") {
+      el = document.createElementNS("http://www.w3.org/2000/svg","circle");
+      el.setAttribute("cx",s.x0); el.setAttribute("cy",s.y0); el.setAttribute("r","2");
+    } else {
+      el = document.createElementNS("http://www.w3.org/2000/svg","rect");
+      el.setAttribute("x",s.x0); el.setAttribute("y",s.y0);
+      el.setAttribute("width",s.x1-s.x0+1); el.setAttribute("height",s.y1-s.y0+1);
+      el.setAttribute("rx","1");
+    }
+    el.setAttribute("class","region"); svg.appendChild(el);
+    const t = document.createElementNS("http://www.w3.org/2000/svg","text");
+    t.setAttribute("x", s.x0+1); t.setAttribute("y", Math.max(4, s.y0-1));
+    t.setAttribute("class","regionlbl");
+    t.textContent = `${s.name}: ${fmt(s.avg_c)}`;
+    svg.appendChild(t);
+  }
+}
+async function loadRegions() {
+  try {
+    const d = await (await fetch("/api/regions")).json();
+    state.regions = d.stats || [];
+    drawRegions();
+    $("regions").innerHTML = state.regions.length
+      ? state.regions.map(r =>
+          `<li><span class="grow">${r.name}</span><span class="val">${fmt(r.min_c)} / ${fmt(r.avg_c)} / ${fmt(r.max_c)}</span>` +
+          `<button class="x" data-id="${r.id}">×</button></li>`).join("")
+      : "<li><span class='grow'>No measurements</span></li>";
+    for (const b of $("regions").querySelectorAll("button[data-id]")) {
+      b.onclick = async () => { await fetch("/api/regions/"+b.dataset.id,{method:"DELETE"}); loadRegions(); };
+    }
+  } catch (e) {}
+}
+$("clearRegions").onclick = async () => { await fetch("/api/regions",{method:"DELETE"}); loadRegions(); };
+
+// ---- alarms ------------------------------------------------------------
+async function loadAlarms() {
+  try {
+    const d = await (await fetch("/api/alarms")).json();
+    state.alarms = d.alarms || [];
+    $("alarms").innerHTML = state.alarms.length
+      ? state.alarms.map(a =>
+          `<li><span class="grow">${a.name}</span><span class="val">${a.kind} ${fmt(a.threshold_c)} · ${a.dwell_s}s</span>` +
+          `<button class="x" data-id="${a.id}">×</button></li>`).join("")
+      : "<li><span class='grow'>No alarms</span></li>";
+    for (const b of $("alarms").querySelectorAll("button[data-id]")) {
+      b.onclick = async () => { await fetch("/api/alarms/"+b.dataset.id,{method:"DELETE"}); loadAlarms(); };
+    }
+    const last = d.last_alarm;
+    if (last) state.lastAlarm = last;
+    $("lastAlarm").innerHTML = last
+      ? `<span>${last.name}</span><span>${fmt(last.value_c)} at ${new Date(last.at*1000).toLocaleTimeString()}</span>`
+      : "<span>—</span><span>none</span>";
+    if (last && state.dismissed !== last.at + last.name) {
+      $("bannerText").textContent = `${last.name} · ${fmt(last.value_c)} (${last.kind} ${fmt(last.threshold_c)})`;
+      $("banner").classList.add("show");
+    } else $("banner").classList.remove("show");
+  } catch (e) {}
+}
+$("dismiss").onclick = () => {
+  if (state.lastAlarm) state.dismissed = state.lastAlarm.at + state.lastAlarm.name;
+  $("banner").classList.remove("show");
+};
+$("addAlarm").onclick = async () => {
+  const body = { kind:$("alarmKind").value, threshold_c:Number($("alarmC").value), dwell_s:Number($("alarmDwell").value)||0, name:$("alarmName").value };
+  const r = await fetch("/api/alarms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  $("alarmState").textContent = r.ok ? "added" : "error: " + (await r.text());
+  if (r.ok) loadAlarms();
+};
+
+// ---- capture / reference ----------------------------------------------
+$("snap").onclick = $("snapTop").onclick = async () => {
+  $("snapState").textContent = "saving…";
+  const r = await fetch("/api/snapshot",{method:"POST"});
+  $("snapState").textContent = r.ok ? "saved " + (await r.json()).name : "error: " + (await r.text());
+  if (r.ok) listSnaps();
+};
+async function listSnaps() {
+  try { const d=await (await fetch("/api/snapshots")).json();
+    $("snaps").innerHTML=(d.snapshots||[]).slice(0,10).map(n=>`<a href="/api/snapshots/${n}" target="_blank" rel="noreferrer">${n}</a>`).join("");
+  } catch(e){}
+}
+$("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
+$("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELETE"}); $("dtStats").innerHTML="<span>ΔT</span><span>no reference</span>"; };
+$("dtToggle").onchange = (e) => {
+  state.dt = e.target.checked;
+  $("viewer").className = "viewer " + state.mode + (state.dt ? " dt" : "");
+  if (state.dt) refreshDt();
+};
+async function refreshDt() {
+  if (!state.dt) return;
+  $("dtimg").src = "/api/dt.jpg?t=" + Date.now();
+  try {
+    const d = await (await fetch("/api/dt.json")).json();
+    $("dtStats").innerHTML = d.ready
+      ? `<span>Min</span><span>${fmt(d.min_c)}</span><span>Avg</span><span>${fmt(d.avg_c)}</span><span>Max</span><span>${fmt(d.max_c)}</span>`
+      : "<span>ΔT</span><span>no reference</span>";
+  } catch(e){}
+}
+
 // ---- calibration -------------------------------------------------------
 $("calApply").onclick = async () => {
-  const body = { scale: Number($("calScale").value), offset: Number($("calOffset").value) };
-  const r = await fetch("/api/calibration", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const r = await fetch("/api/calibration",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({scale:Number($("calScale").value),offset:Number($("calOffset").value)})});
   $("calState").textContent = r.ok ? "applied" : "error: " + (await r.text());
 };
 $("calFactory").onclick = async () => {
-  await fetch("/api/calibration", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ scale:0.01, offset:0 }) });
-  $("calScale").value = 0.01; $("calOffset").value = 0; $("calState").textContent = "factory";
+  await fetch("/api/calibration",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scale:0.01,offset:0})});
+  $("calScale").value=0.01; $("calOffset").value=0; $("calState").textContent="factory";
 };
 
-// ---- snapshots ---------------------------------------------------------
-$("snap").onclick = async () => {
-  $("snapState").textContent = "saving…";
-  const r = await fetch("/api/snapshot", { method:"POST" });
-  if (r.ok) { const d = await r.json(); $("snapState").textContent = "saved " + d.name; listSnaps(); }
-  else $("snapState").textContent = "error: " + (await r.text());
-};
-async function listSnaps() {
+// ---- chart -------------------------------------------------------------
+async function loadHistory() {
   try {
-    const d = await (await fetch("/api/snapshots")).json();
-    $("snaps").innerHTML = (d.snapshots || []).slice(0,8).map(n => `<a href="/api/snapshots/${n}" target="_blank" rel="noreferrer">${n}</a>`).join("");
-  } catch (e) {}
+    const d = await (await fetch("/api/history.json?limit=600")).json();
+    state.history = d.samples || [];
+    drawChart();
+    $("chartRange").textContent = state.history.length ? `${Math.round(state.history.length/60)} min` : "60 min";
+  } catch(e){}
+}
+function drawChart() {
+  const c = $("chart"); if (!c) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (w < 10 || h < 10) return;
+  c.width = w*dpr; c.height = h*dpr;
+  const g = c.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+  const s = state.history;
+  if (s.length < 2) { g.fillStyle="#5c6673"; g.font="11px ui-monospace,monospace"; g.fillText("collecting…",8,h/2); return; }
+  let lo=Infinity, hi=-Infinity;
+  for (const x of s) { lo=Math.min(lo,x.min_c,x.mean_c,x.max_c); hi=Math.max(hi,x.min_c,x.mean_c,x.max_c); }
+  if (hi-lo < 1) { hi += .5; lo -= .5; }
+  const pad = 2, left = 34, bottom = 4;
+  const px = (i) => left + (i/(s.length-1))*(w-left-2);
+  const py = (v) => pad + (1-(v-lo)/(hi-lo))*(h-pad-bottom-10);
+  g.strokeStyle="#1b222b"; g.lineWidth=1; g.font="9px ui-monospace,monospace"; g.fillStyle="#5c6673";
+  for (let k=0;k<=2;k++) {
+    const v = lo + (hi-lo)*k/2, y = py(v);
+    g.beginPath(); g.moveTo(left,y); g.lineTo(w-2,y); g.stroke();
+    g.fillText(v.toFixed(1), 2, y+3);
+  }
+  const line = (key, colour) => {
+    g.strokeStyle=colour; g.lineWidth=1.4; g.beginPath();
+    s.forEach((x,i)=> i?g.lineTo(px(i),py(x[key])):g.moveTo(px(i),py(x[key])));
+    g.stroke();
+  };
+  line("max", "#ff9f1a"); line("mean", "#9aa4b2"); line("min", "#7fd1ff");
 }
 
 // ---- poll --------------------------------------------------------------
 async function poll() {
   try {
-    const d = await (await fetch("/api/thermal.json", { cache:"no-store" })).json();
-    const connected = !!d.connected, ready = !!d.ready;
-    $("dot").className = "dot" + (connected ? " on" : "");
+    const d = await (await fetch("/api/thermal.json",{cache:"no-store"})).json();
+    const connected=!!d.connected, ready=!!d.ready;
+    $("dot").className="dot"+(connected?" on":"");
     $("waiting").classList.toggle("show", !ready);
-    $("badge").textContent = ready ? (connected ? "live" : "stale frame") : "waiting for frames";
+    $("badge").textContent = ready ? (connected?"live":"stale") : "waiting";
     if (d.spec) {
-      $("drv").textContent = d.spec.driver || "–";
-      $("mdl").textContent = d.spec.model || "–";
-      const t = d.spec.thermal;
-      $("res").textContent = t ? `${t.width}×${t.height} · ${t.bit_depth}-bit` : "none";
-      if (t) { state.w = t.width; state.h = t.height; }
-      $("source").textContent = `${d.spec.driver} · ${d.spec.model || ""}`;
+      $("drv").textContent=d.spec.driver||"–";
+      $("cmodel").textContent=d.spec.model||"–";
+      $("mdl").textContent=d.spec.model||"";
+      $("source").textContent=d.spec.driver+" · "+(d.spec.model||"");
+      const t=d.spec.thermal;
+      $("res").textContent=t?`${t.width}×${t.height} · ${t.bit_depth}-bit`:"none";
+      if (t) { state.w=t.width; state.h=t.height; }
     }
-    $("seq").textContent = d.seq ?? "–";
-    $("link").innerHTML = connected ? '<span class="ok">connected</span>' : '<span class="err">offline</span>';
-    if (d.palettes) paintPalettes(d.palettes, (d.display || {}).palette);
-    if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized = true; }
-    if (d.calibration && document.activeElement !== $("calScale")) {
-      $("calScale").value = d.calibration.scale; $("calOffset").value = d.calibration.offset;
-    }
+    $("seq").textContent=d.seq??"–";
+    $("link").innerHTML=connected?'<span class="ok">connected</span>':'<span class="err">offline</span>';
+    $("vlink").innerHTML=d.video?'<span class="ok">transcoding</span>':'<span class="warn">unavailable</span>';
+    if (d.palettes) paintPalettes(d.palettes,(d.display||{}).palette);
+    if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized=true; }
+    if (d.calibration && document.activeElement!==$("calScale")) { $("calScale").value=d.calibration.scale; $("calOffset").value=d.calibration.offset; }
     if (!ready || !d.stats) return;
-    const s = d.stats;
-    $("tmin").textContent = fmt(s.min_c);
-    $("tmean").textContent = fmt(s.mean_c);
-    $("tmax").textContent = fmt(s.max_c);
-    if (s.hot && s.w && s.h) {
-      $("hot").style.display = "block";
-      $("hot").style.left = (s.hot[0] / s.w * 100) + "%";
-      $("hot").style.top = (s.hot[1] / s.h * 100) + "%";
-    }
-    const peaks = d.peaks || [];
-    $("peaks").innerHTML = peaks.length
-      ? peaks.map((p,i) => `<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
+    const s=d.stats;
+    $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
+    if (s.hot && s.w && s.h) { $("hot").style.display="block"; $("hot").style.left=(s.hot[0]/s.w*100)+"%"; $("hot").style.top=(s.hot[1]/s.h*100)+"%"; }
+    $("peaks").innerHTML=(d.peaks||[]).length
+      ? d.peaks.map((p,i)=>`<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
       : "<li><span>no hot spots</span><span></span></li>";
-    $("foot").textContent = `seq ${d.seq} · ${s.w}×${s.h}`;
-  } catch (e) {
-    $("dot").className = "dot";
-    $("link").innerHTML = '<span class="err">unreachable</span>';
+  } catch(e) {
+    $("dot").className="dot"; $("link").innerHTML='<span class="err">unreachable</span>';
   }
 }
-poll(); setInterval(poll, 1000); listSnaps();
+
+poll(); setInterval(poll, 1000);
+loadHistory(); setInterval(loadHistory, 2000);
+loadRegions(); setInterval(loadRegions, 5000);
+loadAlarms(); setInterval(loadAlarms, 2000);
+listSnaps();
+setInterval(() => { if (state.dt) refreshDt(); }, 1000);
+window.addEventListener("resize", drawChart);
 </script>
 </body>
 </html>
