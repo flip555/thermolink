@@ -1107,7 +1107,9 @@ fn inside(region: &Region, x: i32, y: i32) -> bool {
                 let (xi, yi) = (pts[i][0], pts[i][1]);
                 let (xj, yj) = (pts[j][0], pts[j][1]);
                 if (yi > y) != (yj > y)
-                    && x < (xj - xi) * (y - yi) / (yj - yi).max(1) + xi
+                    && (x as f32)
+                        < (xj - xi) as f32 * (y - yi) as f32 / (yj - yi).max(1) as f32
+                            + xi as f32
                 {
                     inside = !inside;
                 }

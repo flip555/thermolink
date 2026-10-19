@@ -194,7 +194,8 @@
 
     <div class="tabpanel" id="tab-measure">
       <h2>Measurements</h2>
-      <div class="hint" style="margin:0">Click for a point, drag for a box. Saved on the server.</div>
+      <div class="hint" style="margin:0">Click for a point, drag for a box, or draw a polygon.</div>
+      <div class="row" style="margin-top:8px"><button id="polyBtn">Draw polygon</button><span class="hint" id="polyHint"></span></div>
       <ul class="list" id="regions"><li><span class="grow">No measurements</span></li></ul>
       <div class="row" style="margin-top:10px"><button id="clearRegions">Clear all</button>
         <a class="hint" href="/api/regions.csv" target="_blank" rel="noreferrer">CSV</a></div>
@@ -271,7 +272,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   unit: "C", display: null, initialized: false, palettes: [], mode: "thermal",
   w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false,
-  split: 50, anchor: "left", feedStarted: false, visStarted: false,
+  split: Number(saved("split", "50")), anchor: "left", feedStarted: false, visStarted: false,
+  polyMode: false, polyPts: [],
   align: {x:0,y:0,scale:1,rot:0,flip_h:false,flip_v:false}
 };
 
@@ -358,6 +360,7 @@ window.addEventListener("pointermove", (e) => {
   const vertical = state.anchor === "left" || state.anchor === "right";
   const p = vertical ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
   state.split = Math.max(2, Math.min(98, p * 100));
+  save("split", String(state.split));
   applyWipe();
 });
 window.addEventListener("pointerup", () => { wipeDrag = false; });
@@ -405,6 +408,11 @@ function toThermal(e) {
 }
 viewer.addEventListener("pointerdown", (e) => {
   if (state.mode === "visible" || state.mode === "wipe") return;
+  if (state.polyMode) {
+    drag = toThermal(e);
+    viewer.setPointerCapture(e.pointerId);
+    return;
+  }
   drag = toThermal(e);
   const r = viewer.getBoundingClientRect();
   $("sel").style.display="block";
@@ -424,6 +432,25 @@ viewer.addEventListener("pointerup", async (e) => {
   if (!drag) return;
   const start=drag; drag=null; $("sel").style.display="none";
   const end=toThermal(e);
+  if (state.polyMode) {
+    const [x,y] = start;
+    if (state.polyPts.length >= 3) {
+      const [fx,fy] = state.polyPts[0];
+      if (Math.abs(x-fx) <= 3 && Math.abs(y-fy) <= 3) {
+        const pts = state.polyPts.slice();
+        state.polyMode = false; state.polyPts = [];
+        $("polyBtn").classList.remove("active"); $("polyHint").textContent = "";
+        await fetch("/api/regions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ kind:"poly", pts }) });
+        loadRegions();
+        drawRegions();
+        return;
+      }
+    }
+    state.polyPts.push([x,y]);
+    $("polyHint").textContent = `${state.polyPts.length} points — click the first point to close`;
+    drawRegions();
+    return;
+  }
   if (Math.abs(end[0]-start[0])<3 && Math.abs(end[1]-start[1])<3) {
     const r = await fetch(`/api/point?x=${start[0]}&y=${start[1]}`);
     if (r.ok) { const d=await r.json(); $("probe").innerHTML=`<span>Point ${d.x},${d.y}</span><span>${fmt(d.c)}</span>`; }
@@ -455,7 +482,26 @@ function drawRegions() {
     t.textContent = `${s.name}: ${fmt(s.avg_c)}`;
     svg.appendChild(t);
   }
+  if (state.polyPts.length) {
+    const pl = document.createElementNS("http://www.w3.org/2000/svg","polyline");
+    pl.setAttribute("points", state.polyPts.map(p => `${p[0]},${p[1]}`).join(" "));
+    pl.setAttribute("fill","none"); pl.setAttribute("stroke","#ffd166"); pl.setAttribute("stroke-width","0.8");
+    pl.setAttribute("stroke-dasharray","2 1.5");
+    svg.appendChild(pl);
+    for (const p of state.polyPts) {
+      const c = document.createElementNS("http://www.w3.org/2000/svg","circle");
+      c.setAttribute("cx",p[0]); c.setAttribute("cy",p[1]); c.setAttribute("r","1.6");
+      c.setAttribute("fill","#ffd166"); svg.appendChild(c);
+    }
+  }
 }
+$("polyBtn").onclick = () => {
+  state.polyMode = !state.polyMode;
+  state.polyPts = [];
+  $("polyBtn").classList.toggle("active", state.polyMode);
+  $("polyHint").textContent = state.polyMode ? "click points; click the first to close" : "";
+  drawRegions();
+};
 async function loadRegions() {
   try {
     const d = await (await fetch("/api/regions")).json();
