@@ -101,6 +101,11 @@
   .snaps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .snaps a{font:11px ui-monospace,Menlo,monospace;color:var(--cold);text-decoration:none;border:1px solid #24303d;border-radius:5px;padding:2px 5px}
   .snaps a:hover{border-color:var(--accent)}
+  .authmodal{position:fixed;inset:0;background:#0a0c0ff2;backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:100}
+  .authmodal.show{display:flex}
+  .authcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;width:340px;display:flex;flex-direction:column;gap:10px}
+  .authcard h1{font-size:17px;margin:0}
+  .authcard .err{color:var(--err);font-size:12px;min-height:16px}
   @media (max-width:1000px){
     body{overflow:auto}
     .shell{grid-template-columns:1fr;height:auto}
@@ -125,6 +130,7 @@
   <div class="spacer"></div>
   <button id="unit">°C</button>
   <button id="snapTop" class="primary">Snapshot</button>
+  <button id="logout" style="display:none">Log out</button>
 </header>
 
 <div class="shell">
@@ -265,6 +271,17 @@
       </div>
     </div>
   </aside>
+</div>
+
+<div class="authmodal" id="auth">
+  <form class="authcard" id="authForm">
+    <h1 id="authTitle">Sign in</h1>
+    <div class="hint" id="authHint"></div>
+    <label class="f">Username <input id="authUser" autocomplete="username" required></label>
+    <label class="f">Password <input id="authPass" type="password" autocomplete="current-password" required></label>
+    <div class="err" id="authErr"></div>
+    <button class="primary" type="submit" id="authSubmit">Sign in</button>
+  </form>
 </div>
 
 <script>

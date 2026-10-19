@@ -6,9 +6,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use rand_core::{OsRng, RngCore};
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
 use axum::body::Body;
-use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{header, StatusCode};
+use axum::extract::{Path as AxumPath, Query, Request, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -68,6 +72,12 @@ pub struct NotifyConfig {
     pub webhook: Option<String>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AuthFile {
+    pub username: String,
+    pub hash: String,
+}
+
 #[derive(Clone, Serialize, PartialEq)]
 pub struct Sample {
     pub t: u64,
@@ -108,6 +118,8 @@ pub struct AppState {
     pub display: RwLock<DisplaySettings>,
     pub align: RwLock<Align>,
     pub notify: RwLock<NotifyConfig>,
+    pub auth: RwLock<Option<AuthFile>>,
+    sessions: RwLock<HashMap<String, Instant>>,
     pub calibration: RwLock<Calibration>,
     pub connected: Arc<AtomicBool>,
     pub source: String,
@@ -159,12 +171,17 @@ impl AppState {
             .ok()
             .and_then(|t| serde_json::from_str::<NotifyConfig>(&t).ok())
             .unwrap_or_default();
+        let auth = std::fs::read_to_string(data_dir.join("auth.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<AuthFile>(&t).ok());
         Self {
             spec,
             hub,
             display: RwLock::new(display),
             align: RwLock::new(align),
             notify: RwLock::new(notify),
+            auth: RwLock::new(auth),
+            sessions: RwLock::new(HashMap::new()),
             calibration: RwLock::new(calibration),
             connected,
             source,
@@ -223,6 +240,14 @@ impl AppState {
         let n = self.notify.read().await.clone();
         let _ = std::fs::create_dir_all(&self.data_dir);
         let _ = std::fs::write(self.data_dir.join("notifications.json"), serde_json::to_vec_pretty(&n).unwrap_or_default());
+    }
+
+    async fn persist_auth(&self) {
+        let auth = self.auth.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        if let Some(auth) = auth {
+            let _ = std::fs::write(self.data_dir.join("auth.json"), serde_json::to_vec_pretty(&auth).unwrap_or_default());
+        }
     }
 
     async fn persist_alarms(&self) {
@@ -332,6 +357,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/align", get(get_align).post(set_align))
         .route("/api/notify", get(get_notify).post(set_notify))
         .route("/api/version", get(version))
+        .route("/api/whoami", get(whoami))
+        .route("/api/setup", post(setup))
+        .route("/api/login", post(login))
+        .route("/api/logout", post(logout))
         .route("/api/regions.csv", get(regions_csv))
         .route("/api/history.csv", get(history_csv))
         .route("/api/history.json", get(history_json))
@@ -348,7 +377,151 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/snapshot", post(snapshot))
         .route("/api/snapshots", get(list_snapshots))
         .route("/api/snapshots/{name}", get(snapshot_file))
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(state, auth_mw))
+}
+
+fn public_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/" | "/api/health" | "/api/version" | "/api/whoami" | "/api/setup" | "/api/login"
+    )
+}
+
+fn session_token(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
+    raw.split(';')
+        .find_map(|part| part.trim().strip_prefix("thermolink_session=").map(str::to_string))
+}
+
+async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    if public_path(req.uri().path()) {
+        return next.run(req).await;
+    }
+    if let Some(token) = session_token(req.headers()) {
+        let valid = st
+            .sessions
+            .read()
+            .await
+            .get(&token)
+            .is_some_and(|expires| *expires > Instant::now());
+        if valid {
+            return next.run(req).await;
+        }
+    }
+    (StatusCode::UNAUTHORIZED, "login required").into_response()
+}
+
+async fn whoami(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<serde_json::Value> {
+    let auth = st.auth.read().await.clone();
+    let authenticated = match session_token(&headers) {
+        Some(token) => st
+            .sessions
+            .read()
+            .await
+            .get(&token)
+            .is_some_and(|expires| *expires > Instant::now()),
+        None => false,
+    };
+    Json(json!({
+        "authenticated": authenticated,
+        "setup_required": auth.is_none(),
+        "user": auth.map(|a| a.username),
+    }))
+}
+
+#[derive(Deserialize)]
+struct Credentials {
+    username: String,
+    password: String,
+}
+
+async fn new_session(st: &Arc<AppState>) -> String {
+    let mut bytes = [0u8; 32];
+    let mut rng = OsRng;
+    rng.fill_bytes(&mut bytes);
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    st.sessions.write().await.insert(
+        token.clone(),
+        Instant::now() + Duration::from_secs(7 * 24 * 3600),
+    );
+    token
+}
+
+fn session_response(token: String) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::SET_COOKIE,
+            format!("thermolink_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800"),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"ok":true}"#))
+        .unwrap()
+}
+
+async fn setup(
+    State(st): State<Arc<AppState>>,
+    Json(c): Json<Credentials>,
+) -> Result<Response, (StatusCode, String)> {
+    if st.auth.read().await.is_some() {
+        return Err((StatusCode::CONFLICT, "already set up".into()));
+    }
+    let username = c.username.trim().to_string();
+    if username.len() < 2 {
+        return Err((StatusCode::BAD_REQUEST, "username too short".into()));
+    }
+    if c.password.len() < 6 {
+        return Err((StatusCode::BAD_REQUEST, "password must be at least 6 characters".into()));
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(c.password.as_bytes(), &salt)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .to_string();
+    *st.auth.write().await = Some(AuthFile {
+        username: username.clone(),
+        hash,
+    });
+    st.persist_auth().await;
+    tracing::info!(user = %username, "admin account created");
+    Ok(session_response(new_session(&st).await))
+}
+
+async fn login(
+    State(st): State<Arc<AppState>>,
+    Json(c): Json<Credentials>,
+) -> Result<Response, (StatusCode, String)> {
+    let Some(auth) = st.auth.read().await.clone() else {
+        return Err((StatusCode::CONFLICT, "setup required".into()));
+    };
+    if auth.username != c.username.trim() {
+        return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
+    }
+    let parsed = PasswordHash::new(&auth.hash)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if Argon2::default()
+        .verify_password(c.password.as_bytes(), &parsed)
+        .is_err()
+    {
+        return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
+    }
+    Ok(session_response(new_session(&st).await))
+}
+
+async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Some(token) = session_token(&headers) {
+        st.sessions.write().await.remove(&token);
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::SET_COOKIE,
+            "thermolink_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"ok":true}"#))
+        .unwrap()
 }
 
 async fn index() -> Html<&'static str> {
