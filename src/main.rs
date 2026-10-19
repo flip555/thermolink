@@ -1,9 +1,12 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use thermolink::camera::{registry, CameraDriver, FramePayload};
 use thermolink::config::{CameraConfig, Config};
+use thermolink::server::{self, AppState};
 use thermolink::stream::FrameHub;
 use tracing::{info, warn};
 
@@ -58,6 +61,23 @@ enum Command {
 
     /// Print the default configuration.
     Config,
+
+    /// Serve the web UI (camera loop + HTTP on one process).
+    Serve {
+        #[arg(long, default_value = "qianli")]
+        driver: String,
+        #[arg(long, default_value = "192.168.1.64")]
+        host: String,
+        #[arg(long, default_value_t = 3001)]
+        control_port: u16,
+        #[arg(long, default_value_t = 3000)]
+        media_port: u16,
+        #[arg(long, default_value = "0.0.0.0:8099")]
+        bind: String,
+        /// Use the simulated camera — no hardware needed.
+        #[arg(long, default_value_t = false)]
+        demo: bool,
+    },
 }
 
 #[tokio::main]
@@ -93,6 +113,78 @@ async fn main() -> Result<()> {
             seconds,
             log_every_frames,
         } => stream(driver, host, control_port, media_port, seconds, log_every_frames).await,
+        Command::Serve {
+            driver,
+            host,
+            control_port,
+            media_port,
+            bind,
+            demo,
+        } => serve(driver, host, control_port, media_port, bind, demo).await,
+    }
+}
+
+async fn serve(
+    driver: String,
+    host: String,
+    control_port: u16,
+    media_port: u16,
+    bind: String,
+    demo: bool,
+) -> Result<()> {
+    let driver = if demo { "mock".to_string() } else { driver };
+    let cfg = camera_config(driver, host, control_port, media_port);
+    let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);
+    let hub = FrameHub::new(512);
+    let connected = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(AppState::new(
+        driver.spec(),
+        hub.clone(),
+        driver.id().to_string(),
+        connected.clone(),
+    ));
+
+    tokio::spawn(camera_supervisor(driver, hub.clone(), connected));
+
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!("binding {bind}"))?;
+    info!(%bind, "ThermoLink web UI ready");
+    axum::serve(listener, server::router(state)).await?;
+    Ok(())
+}
+
+/// Owns the camera connection: open, read, publish, reconnect.
+async fn camera_supervisor(
+    driver: Arc<dyn CameraDriver>,
+    hub: FrameHub,
+    connected: Arc<AtomicBool>,
+) {
+    let mut backoff = 2u64;
+    loop {
+        match driver.open().await {
+            Ok(mut session) => {
+                connected.store(true, Ordering::Relaxed);
+                info!(driver = driver.id(), "camera session open");
+                loop {
+                    match session.next_frame().await {
+                        Ok(frame) => {
+                            backoff = 2;
+                            hub.publish(frame).await;
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "camera stream ended");
+                            break;
+                        }
+                    }
+                }
+                session.close().await;
+                connected.store(false, Ordering::Relaxed);
+            }
+            Err(e) => warn!(error = %e, "camera connect failed"),
+        }
+        tokio::time::sleep(Duration::from_secs(backoff)).await;
+        backoff = (backoff * 2).min(60);
     }
 }
 

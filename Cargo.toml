@@ -1,6 +1,6 @@
 [package]
 name = "thermolink"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Modular thermal-camera relay: one web UI, pluggable camera drivers"
@@ -9,9 +9,12 @@ repository = "https://github.com/flip555/thermolink"
 
 [dependencies]
 anyhow = "1"
+async-stream = "0.3"
+axum = { version = "0.8", features = ["json"] }
 async-trait = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+jpeg-encoder = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = [

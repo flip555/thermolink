@@ -13,6 +13,8 @@
 
 pub mod camera;
 pub mod config;
+pub mod render;
+pub mod server;
 pub mod stream;
 
 pub use camera::{

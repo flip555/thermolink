@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use serde::Serialize;
 
+pub mod mock;
 pub mod qianli;
 pub mod registry;
 
@@ -232,6 +233,21 @@ impl CameraFrame {
             FramePayload::Thermal(t) => Some(t),
             _ => None,
         }
+    }
+}
+
+/// Small helper for renderer tests.
+#[cfg(test)]
+pub fn thermal_test_image(values: &[u16], width: u32, height: u32) -> ThermalImage {
+    let mut raw = Vec::with_capacity(values.len() * 2);
+    for v in values {
+        raw.extend_from_slice(&v.to_le_bytes());
+    }
+    ThermalImage {
+        width,
+        height,
+        raw: Bytes::from(raw),
+        calibration: Calibration::default(),
     }
 }
 

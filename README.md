@@ -8,9 +8,9 @@ features and removes the coupling — the web server never learns a camera's
 resolution, packet layout, or network dialect. It asks a driver for a
 `CameraSpec` and consumes `CameraFrame`s.
 
-**Status: milestone 1.** Project structure, driver contract, the Qianli
-handshake, and thermal frame extraction are implemented and unit-tested against
-captured bytes. The HTTP UI is the next milestone.
+**Status: milestone 2.** The driver boundary, Qianli handshake, thermal
+extraction, palette/band renderer, HTTP server and a working live UI are in
+place. A simulated driver lets you run the whole app with no hardware.
 
 ## Layout
 
@@ -24,6 +24,7 @@ thermolink/
 │   ├── camera/
 │   │   ├── mod.rs           # CameraDriver, CameraSession, CameraSpec, frames
 │   │   ├── registry.rs      # driver id -> implementation
+│   │   ├── mock.rs          # simulated 160x120 source (demo/test)
 │   │   └── qianli/
 │   │       ├── mod.rs       # handshake + session read loop
 │   │       ├── protocol.rs  # byte-exact packets (unit-tested vs capture)
@@ -73,7 +74,31 @@ cargo build --release
 
 # the camera loop with reconnect/backoff and frame logging
 RUST_LOG=thermolink=info ./target/release/thermolink stream --host 192.168.1.64
+
+# the whole app against the simulator — no camera required
+./target/release/thermolink serve --demo --bind 0.0.0.0:8099
+
+# the whole app against a real camera
+./target/release/thermolink serve --host 192.168.1.64 --bind 0.0.0.0:8099
 ```
+
+Open `http://localhost:8099`. The UI is a live MJPEG view with min/mean/max,
+the three hottest spots, palette switching, and independent clip and span bands
+(clip hides temperatures as white; span maps the palette onto a chosen range).
+`Save JPEG` downloads the current render.
+
+### HTTP surface
+
+| Path | Purpose |
+|------|---------|
+| `/` | web UI |
+| `/api/spec` | driver capabilities (resolution, bit depth, calibration) |
+| `/api/thermal.json` | stats, peaks, display settings, connection state |
+| `/api/thermal.jpg` | one rendered frame |
+| `/api/thermal.mjpg` | multipart MJPEG at 10 fps |
+| `/api/display` | GET/POST palette + clip/span |
+| `/api/raw.h264` | raw visible stream passthrough |
+| `/api/health` | liveness + frame sequence |
 
 `probe` is the honest test: if no thermal frame arrives it exits non-zero. A
 polite handshake alone does not mean the camera accepted the session.
@@ -95,13 +120,13 @@ Full details, including the settings ritual and the notes about port 23, are in
 
 ## Roadmap
 
-1. **Web server** — Axum: `/thermal.json`, `/stream.mjpg`, `/raw.h264`,
-   `/health`, settings endpoints. Port `web/index.html` unchanged.
-2. **Thermal rendering** — palette LUTs (rainbow / ironbow / white-hot /
-   black-hot), clip and span bands, isotherm, ΔT against a reference, regions.
+1. **Visible + thermal composition** — WebCodecs H.264 in the browser, Wipe /
+   PiP / Fusion modes, alignment controls.
+2. **Measurement** — regions (point / rect / polygon), reference and ΔT image,
+   CSV history, snapshot store with raw-frame re-analysis.
 3. **Settings + calibration** — two-point fit, persisted per driver, plus the
    camera's own 376-byte network block behind a driver capability.
-4. **Alarms, history, snapshots, auth** — port the remaining Python modules.
+4. **Alarms, history, auth** — port the remaining Python modules.
 
 ## Credits
 
