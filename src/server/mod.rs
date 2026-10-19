@@ -350,6 +350,23 @@ impl AppState {
             .as_ref()
             .and_then(|id| references.iter().find(|r| &r.id == id))
             .map(|r| r.vals.clone());
+        let mut session_map: HashMap<String, Session> = HashMap::new();
+        if let Ok(text) = std::fs::read_to_string(data_dir.join("sessions.json")) {
+            if let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(&text) {
+                let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                for (token, val) in obj {
+                    let exp = val["exp"].as_u64().unwrap_or(0);
+                    if exp <= now_unix { continue; }
+                    let role = match val["role"].as_str() { Some("guest") => Role::Guest, _ => Role::Admin };
+                    let user = val["user"].as_str().unwrap_or("admin").to_string();
+                    session_map.insert(token, Session {
+                        expires: Instant::now() + Duration::from_secs(exp - now_unix),
+                        role,
+                        user,
+                    });
+                }
+            }
+        }
         let mut token_bytes = [0u8; 8];
         let mut rng = OsRng;
         rng.fill_bytes(&mut token_bytes);
@@ -365,7 +382,7 @@ impl AppState {
             align: RwLock::new(align),
             notify: RwLock::new(notify),
             auth: RwLock::new(auth),
-            sessions: RwLock::new(HashMap::new()),
+            sessions: RwLock::new(session_map),
             setup_token,
             calibration: RwLock::new(calibration),
             connected,
@@ -439,6 +456,23 @@ impl AppState {
     async fn persist_references(&self) -> io::Result<()> {
         let list = self.references.read().await.clone();
         write_atomic(&self.data_dir, "references.json", &json_bytes(&list)?).await
+    }
+
+    async fn persist_sessions(&self) {
+        let now = Instant::now();
+        let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let mut out = serde_json::Map::new();
+        let sessions = self.sessions.read().await;
+        for (token, s) in sessions.iter() {
+            if s.expires <= now { continue; }
+            let exp = now_unix + s.expires.saturating_duration_since(now).as_secs();
+            out.insert(token.clone(), json!({
+                "exp": exp,
+                "role": s.role.as_str(),
+                "user": s.user,
+            }));
+        }
+        let _ = write_atomic(&self.data_dir, "sessions.json", &serde_json::to_vec(&out).unwrap_or_default()).await;
     }
 
     async fn persist_active_ref(&self) -> io::Result<()> {
@@ -849,6 +883,7 @@ async fn new_session(st: &Arc<AppState>, role: Role, user: &str) -> String {
             },
         );
     }
+    st.persist_sessions().await;
     token
 }
 
@@ -952,6 +987,7 @@ async fn login(
 async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Some(token) = session_token(&headers) {
         st.sessions.write().await.remove(&token);
+        st.persist_sessions().await;
     }
     let secure = is_secure_request(&headers);
     let cookie = format!(

@@ -59,7 +59,7 @@
   .viewer.fusion #feed,.viewer.fusion #dtimg,.viewer.wipe #feed,.viewer.wipe #dtimg{opacity:var(--fuse,.55)}
   #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
   .region{fill:#ffd16618;stroke:#ffd166;stroke-width:.7;vector-effect:non-scaling-stroke}
-  .peak{fill:none;stroke:#fff;stroke-width:.55}.peaklbl{fill:#fff;font:2.4px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.5}
+  .peak{fill:#000a;stroke:#fff;stroke-width:.7}.peakbg{fill:#000c}.peaklbl{fill:#fff;font:2.6px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.5}
   .regionlbl{fill:#ffd166;font:4px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.8}
   .readout{position:absolute;left:12px;bottom:12px;display:flex;gap:16px;background:#080a0dd9;border:1px solid #2b3542;border-radius:9px;padding:7px 12px;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);pointer-events:none;z-index:4}
   .readout span{display:block;color:var(--muted);font-size:9px;letter-spacing:.1em}
@@ -101,6 +101,8 @@
   .list .val{font:11px ui-monospace,Menlo,monospace;color:#c8d1dc}
   .x{border:0;background:transparent;color:#5c6673;padding:2px 5px;font-size:14px;line-height:1}
   .x:hover{color:var(--err);background:transparent}
+  .snaprow{display:flex;align-items:center;gap:8px;padding:3px 0;border-top:1px solid #1b222b;font:12px ui-monospace,Menlo,monospace}
+  .snaprow:first-child{border-top:0}
   .peaks{margin:0;padding:0;list-style:none;font:12px ui-monospace,Menlo,monospace;color:#c8d1dc}
   .peaks li{display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid #1b222b}
   .peaks li:first-child{border-top:0}
@@ -213,6 +215,7 @@
       </div>
       <h2 data-i18n="panel.palette">Palette</h2>
       <div class="pals" id="pals"></div>
+      <div data-palette="bands">
       <h2 data-i18n="panel.bands">Bands</h2>
       <label class="f"><span data-i18n="label.clipLow">Clip low</span> <input id="clipLo" type="number" step="0.5" placeholder="off" data-i18n-placeholder="placeholder.off"><span class="hint" data-i18n="hint.shown">shown</span></label>
       <label class="f"><span data-i18n="label.clipHigh">Clip high</span> <input id="clipHi" type="number" step="0.5" placeholder="off" data-i18n-placeholder="placeholder.off"><span class="hint" data-i18n="hint.shown">shown</span></label>
@@ -220,6 +223,8 @@
       <label class="f"><span data-i18n="label.spanHigh">Span high</span> <input id="spanHi" type="number" step="0.5" placeholder="auto" data-i18n-placeholder="placeholder.auto"><span class="hint" data-i18n="hint.colour">colour</span></label>
       <div class="row" style="margin-top:10px"><button id="apply" data-i18n="btn.apply">Apply</button><button id="reset" data-i18n="btn.reset">Reset</button></div>
       <div class="hint" id="bandState"></div>
+      </div>
+      <div data-palette="isotherm">
       <h2 data-i18n="panel.isotherm">Isotherm</h2>
       <div id="isoBands"></div>
       <div class="row" style="margin-top:8px"><button id="isoAdd" data-i18n="btn.addBand">Add band</button><button id="isoApply" data-i18n="btn.applyBands">Apply bands</button></div>
@@ -227,16 +232,15 @@
       <div class="row"><select id="isoProfile" style="flex:1"></select></div>
       <div class="row" style="margin-top:6px"><button id="isoSave" data-i18n="btn.saveAs">Save as…</button><button id="isoDelete" data-i18n="btn.delete">Delete</button></div>
       <div class="hint" id="isoState" data-i18n="hint.isoProfile">Used when the isotherm palette is selected.</div>
+      </div>
       <h2 data-i18n="panel.hotspots">Hot spots</h2>
       <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
 
     <div class="tabpanel" id="tab-measure">
       <h2 data-i18n="panel.measurements">Measurements</h2>
-      <div data-modes="thermal">
       <div class="hint" style="margin:0" data-i18n="hint.measure">Click for a point, drag for a box, or draw a polygon.</div>
       <div class="row" style="margin-top:8px"><button id="pointBtn" data-i18n="btn.point">Point</button><button id="boxBtn" data-i18n="btn.box">Box</button><button id="polyBtn" data-i18n="btn.poly">Polygon</button><span class="hint" id="polyHint"></span></div>
-      </div>
       <ul class="list" id="regions"><li><span class="grow" data-i18n="empty.measurements">No measurements</span></li></ul>
       <div class="row" style="margin-top:10px"><button id="clearRegions" data-i18n="btn.clearAll">Clear all</button>
         <a class="hint" href="/api/regions.csv" target="_blank" rel="noreferrer">CSV</a></div>
@@ -614,6 +618,14 @@ function fitViewer() {
   v.style.height = Math.floor(h) + "px";
 }
 
+function syncPaletteVisibility(palette) {
+  const isIso = ((palette || (state.display && state.display.palette) || "rainbow") === "isotherm");
+  for (const el of document.querySelectorAll("[data-palette]")) {
+    const wantIso = el.dataset.palette === "isotherm";
+    el.style.display = (wantIso === isIso) ? "" : "none";
+  }
+}
+
 function syncModeVisibility() {
   for (const el of document.querySelectorAll("[data-modes]")) {
     const modes = el.dataset.modes.split(/\s+/);
@@ -714,11 +726,12 @@ function paintPalettes(list, current) {
     }
   }
   for (const b of $("pals").children) b.classList.toggle("active", b.dataset.pal === current);
+  syncPaletteVisibility(current);
 }
 async function setDisplay(patch) {
   const next = Object.assign({}, state.display || {}, patch);
   const r = await fetch("/api/display", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(next) });
-  if (r.ok) { state.display = await r.json(); paintPalettes(state.palettes, state.display.palette); $("bandState").textContent = "applied"; setTimeout(()=>$("bandState").textContent="",1200); }
+  if (r.ok) { state.display = await r.json(); syncPaletteVisibility(state.display.palette); paintPalettes(state.palettes, state.display.palette); $("bandState").textContent = "applied"; setTimeout(()=>$("bandState").textContent="",1200); }
   else $("bandState").textContent = "error: " + (await r.text());
 }
 const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Number($(id).value)) ? Number($(id).value) : null);
@@ -811,7 +824,6 @@ function toThermal(e) {
   return [Math.floor(x*state.w), Math.floor(y*state.h)];
 }
 viewer.addEventListener("pointerdown", (e) => {
-  if (state.mode === "visible" || state.mode === "wipe" || state.mode === "pip") return;
   if (state.drawMode === "none") return;
   e.preventDefault();
   drag = toThermal(e);
@@ -905,12 +917,18 @@ function drawRegions() {
     svg.appendChild(t);
   }
   for (const p of state.peaks) {
+    const txt = Math.round(p.c) + "°";
+    const bg = document.createElementNS("http://www.w3.org/2000/svg","rect");
+    bg.setAttribute("x", p.x + 1.0); bg.setAttribute("y", p.y - 3.4);
+    bg.setAttribute("width", String(1.2 + txt.length * 1.35)); bg.setAttribute("height", "3.4");
+    bg.setAttribute("rx", "0.7"); bg.setAttribute("class", "peakbg");
+    svg.appendChild(bg);
     const c = document.createElementNS("http://www.w3.org/2000/svg","circle");
-    c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", "1.3");
+    c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", "1.5");
     c.setAttribute("class", "peak"); svg.appendChild(c);
     const t = document.createElementNS("http://www.w3.org/2000/svg","text");
-    t.setAttribute("x", p.x + 1.7); t.setAttribute("y", Math.max(3, p.y - 1.1));
-    t.setAttribute("class", "peaklbl"); t.textContent = Math.round(p.c) + "°";
+    t.setAttribute("x", p.x + 1.6); t.setAttribute("y", Math.max(3, p.y - 1.0));
+    t.setAttribute("class", "peaklbl"); t.textContent = txt;
     svg.appendChild(t);
   }
   if (state.polyPts.length) {
@@ -1138,11 +1156,16 @@ $("snap").onclick = $("snapTop").onclick = async () => {
 };
 async function listSnaps() {
   try { const d=await (await fetch("/api/snapshots")).json();
-    $("snaps").innerHTML=(d.snapshots||[]).slice(0,10).map(n=>
-      `<a href="/api/snapshots/${n}" target="_blank" rel="noreferrer">${n}</a>` +
-      `<a href="/api/reanalyze.jpg?name=${n}" target="_blank" rel="noreferrer" title="re-analyse with current palette">re</a>` +
-      `<a href="/api/compare.jpg?name=${n}" target="_blank" rel="noreferrer" title="compare with current">cmp</a>`
+    const names = (d.snapshots || []).slice().sort().reverse().slice(0, 12);
+    $("snaps").innerHTML = names.map(n =>
+      `<div class="snaprow"><span class="grow">${n}</span>` +
+      `<a class="hint" href="/api/snapshots/${n}" target="_blank" rel="noreferrer">jpg</a>` +
+      `<a class="hint" href="/api/snapshots/${n}.raw">raw</a>` +
+      `<a class="hint" href="/api/snapshots/${n}.json">json</a>` +
+      `<button class="x" data-del="${n}" title="delete">×</button></div>`
     ).join("");
+    for (const b of $("snaps").querySelectorAll("button[data-del]"))
+      b.onclick = async () => { await fetch(`/api/snapshots/${encodeURIComponent(b.dataset.del)}`, { method:"DELETE" }); listSnaps(); };
   } catch(e){}
 }
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
