@@ -56,7 +56,7 @@
   .viewer.pip #feed{inset:auto 14px 14px auto;width:30%;height:auto;border:1px solid #3a4553;border-radius:8px;box-shadow:0 6px 24px #000a}
   .viewer.pip.small #feed{width:22%}
   .viewer.pip.large #feed{width:42%}
-  .viewer.fusion #feed{opacity:var(--fuse,.55)}
+  .viewer.fusion #feed,.viewer.fusion #dtimg,.viewer.wipe #feed,.viewer.wipe #dtimg{opacity:var(--fuse,.55)}
   #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
   .region{fill:#ffd16618;stroke:#ffd166;stroke-width:.7;vector-effect:non-scaling-stroke}
   .peak{fill:none;stroke:#fff;stroke-width:.55}.peaklbl{fill:#fff;font:2.4px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.5}
@@ -198,10 +198,15 @@
       <div class="row"><select id="isoProfile" style="flex:1"></select></div>
       <div class="row" style="margin-top:6px"><button id="isoSave" data-i18n="btn.saveAs">Save as…</button><button id="isoDelete" data-i18n="btn.delete">Delete</button></div>
       <div class="hint" id="isoState" data-i18n="hint.isoProfile">Used when the isotherm palette is selected.</div>
+      <div data-modes="pip">
       <h2 data-i18n="panel.pipSize">PiP size</h2>
       <div class="row"><button data-pip="small" data-i18n="pip.small">Small</button><button data-pip="medium" data-i18n="pip.medium">Medium</button><button data-pip="large" data-i18n="pip.large">Large</button></div>
-      <h2 data-i18n="panel.fusion">Fusion</h2>
+      </div>
+      <div data-modes="fusion"><h2 data-i18n="panel.fusion">Fusion</h2></div>
+      <div data-modes="fusion wipe">
       <label class="f"><span data-i18n="label.thermalOpacity">Thermal opacity</span> <input type="range" id="fuse" min="0" max="100" value="55" style="width:100%"></label>
+      </div>
+      <div data-modes="wipe">
       <h2 data-i18n="panel.wipe">Wipe</h2>
       <div class="anchors" id="anchors">
         <button data-anchor="left" class="active" data-i18n="anchor.thermalRight">Thermal right</button>
@@ -210,6 +215,8 @@
         <button data-anchor="bottom" data-i18n="anchor.thermalBottom">Thermal bottom</button>
       </div>
       <div class="hint" data-i18n="hint.wipeDrag">Drag the divider on the image to move the split.</div>
+      </div>
+      <div data-modes="visible wipe pip fusion">
       <h2 data-i18n="panel.align">Align visible</h2>
       <div class="row">
         <button data-nudge="0,-1">▲</button><button data-nudge="-1,0">◀</button>
@@ -219,14 +226,17 @@
       </div>
       <label class="f"><span data-i18n="label.scale">Scale</span> <input id="alignScale" type="range" min="0.5" max="2" step="0.01" value="1" style="width:100%"></label>
       <div class="hint" id="alignState"></div>
+      </div>
       <h2 data-i18n="panel.hotspots">Hot spots</h2>
       <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
 
     <div class="tabpanel" id="tab-measure">
       <h2 data-i18n="panel.measurements">Measurements</h2>
+      <div data-modes="thermal">
       <div class="hint" style="margin:0" data-i18n="hint.measure">Click for a point, drag for a box, or draw a polygon.</div>
       <div class="row" style="margin-top:8px"><button id="pointBtn" data-i18n="btn.point">Point</button><button id="boxBtn" data-i18n="btn.box">Box</button><button id="polyBtn" data-i18n="btn.poly">Polygon</button><span class="hint" id="polyHint"></span></div>
+      </div>
       <ul class="list" id="regions"><li><span class="grow" data-i18n="empty.measurements">No measurements</span></li></ul>
       <div class="row" style="margin-top:10px"><button id="clearRegions" data-i18n="btn.clearAll">Clear all</button>
         <a class="hint" href="/api/regions.csv" target="_blank" rel="noreferrer">CSV</a></div>
@@ -604,6 +614,13 @@ function fitViewer() {
   v.style.height = Math.floor(h) + "px";
 }
 
+function syncModeVisibility() {
+  for (const el of document.querySelectorAll("[data-modes]")) {
+    const modes = el.dataset.modes.split(/\s+/);
+    el.style.display = modes.includes(state.mode) ? "" : "none";
+  }
+}
+
 function applyWipe() {
   const v = $("viewer");
   v.style.setProperty("--split", state.split + "%");
@@ -611,6 +628,7 @@ function applyWipe() {
     (state.mode === "wipe" ? " anchor-" + state.anchor : "") +
     (state.mode === "pip" ? " " + state.pipSize : "");
   for (const b of $("anchors").children) b.classList.toggle("active", b.dataset.anchor === state.anchor);
+  syncModeVisibility();
 }
 function setMode(mode, persist = true) {
   state.mode = mode;
