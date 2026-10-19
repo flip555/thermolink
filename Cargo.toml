@@ -17,7 +17,7 @@ axum = { version = "0.8", features = ["json"] }
 async-trait = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
-jpeg-encoder = "0.6"
+jpeg-encoder = "0.7"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 futures-core = "0.3"
