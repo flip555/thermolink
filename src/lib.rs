@@ -14,6 +14,7 @@
 pub mod camera;
 pub mod config;
 pub mod render;
+pub mod runtime;
 pub mod server;
 pub mod stream;
 pub mod update;
