@@ -33,7 +33,22 @@
   .viewer.thermal #vis{visibility:hidden}
   .viewer.visible #feed{display:none}
   .viewer.dt #feed{display:none}.viewer.dt #dtimg{display:block}
-  .viewer.wipe #feed{clip-path:inset(0 0 0 var(--split,50%))}
+  .viewer.wipe.anchor-left #feed{clip-path:inset(0 0 0 var(--split,50%))}
+  .viewer.wipe.anchor-right #feed{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
+  .viewer.wipe.anchor-top #feed{clip-path:inset(0 0 calc(100% - var(--split,50%)) 0)}
+  .viewer.wipe.anchor-bottom #feed{clip-path:inset(var(--split,50%) 0 0 0)}
+  #wipebar{display:none;position:absolute;z-index:8;background:transparent;touch-action:none}
+  #wipebar::before{content:"";position:absolute;background:#fff;box-shadow:0 0 0 1px #0009}
+  #wipebar::after{content:"";position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;
+    border-radius:50%;background:#14181edb;border:2px solid #fff;box-shadow:0 2px 10px #000a}
+  .viewer.wipe #wipebar{display:block}
+  .viewer.wipe.anchor-left #wipebar,.viewer.wipe.anchor-right #wipebar{top:0;bottom:0;width:18px;left:var(--split,50%);transform:translateX(-9px);cursor:ew-resize}
+  .viewer.wipe.anchor-left #wipebar::before,.viewer.wipe.anchor-right #wipebar::before{left:8px;top:0;bottom:0;width:2px}
+  .viewer.wipe.anchor-top #wipebar,.viewer.wipe.anchor-bottom #wipebar{left:0;right:0;height:18px;top:var(--split,50%);transform:translateY(-9px);cursor:ns-resize}
+  .viewer.wipe.anchor-top #wipebar::before,.viewer.wipe.anchor-bottom #wipebar::before{top:8px;left:0;right:0;height:2px}
+  .anchors{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .anchors button{padding:6px;font-size:12px}
+  .anchors button.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .viewer.pip #feed{inset:auto 14px 14px auto;width:30%;height:auto;border:1px solid #3a4553;border-radius:8px;box-shadow:0 6px 24px #000a}
   .viewer.fusion #feed{opacity:.55}
   #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
@@ -129,6 +144,7 @@
       </div>
       <div id="hot"></div>
       <div id="sel"></div>
+      <div id="wipebar" title="drag to move the divider"></div>
     </section>
     <section class="chartcard">
       <div class="charthead"><span>TEMPERATURE HISTORY</span><span id="chartRange">60 min</span></div>
@@ -155,8 +171,14 @@
       <label class="f">Span high <input id="spanHi" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
       <div class="row" style="margin-top:10px"><button id="apply">Apply</button><button id="reset">Reset</button></div>
       <div class="hint" id="bandState"></div>
-      <h2>Wipe split</h2>
-      <label class="f">Position <input id="split" type="range" min="5" max="95" value="50" style="width:100%"></label>
+      <h2>Wipe</h2>
+      <div class="anchors" id="anchors">
+        <button data-anchor="left" class="active">Thermal right</button>
+        <button data-anchor="right">Thermal left</button>
+        <button data-anchor="top">Thermal top</button>
+        <button data-anchor="bottom">Thermal bottom</button>
+      </div>
+      <div class="hint">Drag the divider on the image to move the split.</div>
       <h2>Hot spots</h2>
       <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
@@ -228,7 +250,8 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   unit: "C", display: null, initialized: false, palettes: [], mode: "thermal",
-  w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false
+  w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false,
+  split: 50, anchor: "left", feedStarted: false, visStarted: false
 };
 
 function fmt(c) {
@@ -247,14 +270,39 @@ for (const b of $("tabs").children) {
     if (b.dataset.tab === "capture") listSnaps();
   };
 }
+function applyWipe() {
+  const v = $("viewer");
+  v.style.setProperty("--split", state.split + "%");
+  v.className = "viewer " + state.mode + (state.dt ? " dt" : "") +
+    (state.mode === "wipe" ? " anchor-" + state.anchor : "");
+  for (const b of $("anchors").children) b.classList.toggle("active", b.dataset.anchor === state.anchor);
+}
 for (const b of $("modes").children) {
   b.onclick = () => {
     state.mode = b.dataset.mode;
     for (const x of $("modes").children) x.classList.toggle("active", x === b);
-    $("viewer").className = "viewer " + state.mode + (state.mode !== "dt" && state.dt ? " dt" : "");
+    applyWipe();
   };
 }
-$("split").oninput = (e) => document.documentElement.style.setProperty("--split", e.target.value + "%");
+for (const b of $("anchors").children) {
+  b.onclick = () => { state.anchor = b.dataset.anchor; applyWipe(); };
+}
+
+// Drag the divider directly.
+let wipeDrag = false;
+$("wipebar").addEventListener("pointerdown", (e) => {
+  wipeDrag = true; e.stopPropagation();
+  $("wipebar").setPointerCapture(e.pointerId);
+});
+window.addEventListener("pointermove", (e) => {
+  if (!wipeDrag) return;
+  const r = $("viewer").getBoundingClientRect();
+  const vertical = state.anchor === "left" || state.anchor === "right";
+  const p = vertical ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
+  state.split = Math.max(2, Math.min(98, p * 100));
+  applyWipe();
+});
+window.addEventListener("pointerup", () => { wipeDrag = false; });
 
 // ---- display -----------------------------------------------------------
 function paintPalettes(list, current) {
@@ -298,7 +346,7 @@ function toThermal(e) {
   return [Math.floor(x*state.w), Math.floor(y*state.h)];
 }
 viewer.addEventListener("pointerdown", (e) => {
-  if (state.mode === "visible") return;
+  if (state.mode === "visible" || state.mode === "wipe") return;
   drag = toThermal(e);
   const r = viewer.getBoundingClientRect();
   $("sel").style.display="block";
@@ -505,6 +553,14 @@ async function poll() {
     if (d.palettes) paintPalettes(d.palettes,(d.display||{}).palette);
     if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized=true; }
     if (d.calibration && document.activeElement!==$("calScale")) { $("calScale").value=d.calibration.scale; $("calOffset").value=d.calibration.offset; }
+    if (ready && !state.feedStarted) {
+      state.feedStarted = true;
+      $("feed").src = "/api/thermal.mjpg?t=" + Date.now();
+    }
+    if (d.video && !state.visStarted) {
+      state.visStarted = true;
+      $("vis").src = "/api/video.mjpg?t=" + Date.now();
+    }
     if (!ready || !d.stats) return;
     const s=d.stats;
     $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
@@ -517,6 +573,16 @@ async function poll() {
   }
 }
 
+$("feed").onerror = () => {
+  state.feedStarted = false;
+  setTimeout(() => { $("feed").src = "/api/thermal.mjpg?t=" + Date.now(); state.feedStarted = true; }, 2000);
+};
+$("vis").onerror = () => {
+  state.visStarted = false;
+  setTimeout(() => { $("vis").src = "/api/video.mjpg?t=" + Date.now(); state.visStarted = true; }, 2000);
+};
+
+applyWipe();
 poll(); setInterval(poll, 1000);
 loadHistory(); setInterval(loadHistory, 2000);
 loadRegions(); setInterval(loadRegions, 5000);
