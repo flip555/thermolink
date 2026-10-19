@@ -239,6 +239,8 @@
       <label class="f">Name <input id="alarmName" type="text" placeholder="optional" style="width:100%"></label>
       <div class="row" style="margin-top:10px"><button class="primary" id="addAlarm">Add alarm</button></div>
       <div class="hint" id="alarmState"></div>
+      <h2>Recent events</h2>
+      <ul class="list" id="events"><li><span class="grow">No events</span></li></ul>
       <h2>Notifications</h2>
       <div class="hint" id="notifyState">none configured</div>
       <label class="f">Discord <input id="notifyDiscord" placeholder="webhook URL" style="width:100%"></label>
@@ -426,7 +428,7 @@ function setTab(name, persist = true) {
   for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.tab === name);
   for (const p of document.querySelectorAll(".tabpanel")) p.classList.toggle("active", p.id === "tab-" + name);
   if (name === "measure") loadRegions();
-  if (name === "alarms") { loadAlarms(); loadNotify(); }
+  if (name === "alarms") { loadAlarms(); loadNotify(); loadEvents(); }
   if (name === "capture") { listSnaps(); loadPrerecord(); loadReferences(); }
 }
 for (const b of $("tabs").children) b.onclick = () => setTab(b.dataset.tab);
@@ -820,6 +822,16 @@ $("refSave").onclick = async () => {
   if (r.ok) { $("refName").value = ""; loadReferences(); refreshDt(); }
 };
 $("refClearAll").onclick = async () => { await fetch("/api/references",{method:"DELETE"}); loadReferences(); };
+
+async function loadEvents() {
+  try {
+    const d = await (await fetch("/api/events")).json();
+    const list = (d.events || []).slice().reverse();
+    $("events").innerHTML = list.length
+      ? list.map(e => `<li><span class="grow">${new Date(e.at*1000).toLocaleTimeString()} · ${e.name}</span><span class="val">${fmt(e.value_c)}</span></li>`).join("")
+      : "<li><span class='grow'>No events</span></li>";
+  } catch(e) {}
+}
 
 // ---------- pre-record ----------
 async function loadPrerecord() {

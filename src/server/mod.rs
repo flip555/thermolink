@@ -172,6 +172,7 @@ pub struct AppState {
     started: Instant,
     pub video: Option<VideoTranscoder>,
     thermal_cache: Mutex<Option<(u64, String, Bytes)>>,
+    events: Mutex<VecDeque<serde_json::Value>>,
     pub driver: Arc<dyn CameraDriver>,
     pub camera_host: String,
     pub data_dir: PathBuf,
@@ -270,6 +271,7 @@ impl AppState {
             started: Instant::now(),
             video,
             thermal_cache: Mutex::new(None),
+            events: Mutex::new(VecDeque::new()),
             driver,
             camera_host,
             data_dir,
@@ -472,6 +474,13 @@ async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats
                 "at": now_secs(),
             });
             *st.last_alarm.write().await = Some(event.clone());
+            {
+                let mut events = st.events.lock().await;
+                events.push_back(event.clone());
+                while events.len() > 50 {
+                    events.pop_front();
+                }
+            }
             let line = format!(
                 "{}\t{}\t{}\t{:.2}C\n",
                 now_secs(),
@@ -531,6 +540,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/regions/{id}", delete(delete_region))
         .route("/api/regions/{id}/ref", post(set_region_ref))
         .route("/api/alarms", get(get_alarms).post(add_alarm).delete(clear_alarms))
+        .route("/api/events", get(list_events))
         .route("/api/alarms/{id}", delete(delete_alarm))
         .route("/api/reference", post(set_reference).delete(clear_reference))
         .route("/api/references", get(list_references).post(add_reference).delete(clear_references))
@@ -1120,6 +1130,11 @@ async fn clear_regions(
     Ok(Json(json!({ "ok": true })))
 }
 
+async fn list_events(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let events: Vec<_> = st.events.lock().await.iter().cloned().collect();
+    Json(json!({ "events": events }))
+}
+
 async fn get_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(json!({
         "alarms": st.alarms.read().await.clone(),
@@ -1593,6 +1608,28 @@ async fn camera_reboot(
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
 }
 
+async fn probe_camera(ip: &str) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Ok(Ok(mut socket)) = tokio::time::timeout(
+        Duration::from_millis(300),
+        tokio::net::TcpStream::connect((ip, 3001)),
+    )
+    .await
+    else {
+        return false;
+    };
+    let packet = crate::camera::qianli::protocol::register(0x6c, 0);
+    if socket.write_all(&packet).await.is_err() {
+        return false;
+    }
+    let mut buf = vec![0u8; 1024];
+    let n = match tokio::time::timeout(Duration::from_millis(700), socket.read(&mut buf)).await {
+        Ok(Ok(n)) => n,
+        _ => 0,
+    };
+    n >= 70 && buf[..n].windows(4).any(|w| w == [0x78, 0xb6, 0x3a, 0x12])
+}
+
 async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let parts: Vec<&str> = st.camera_host.split('.').collect();
     if parts.len() != 4 {
@@ -1606,15 +1643,7 @@ async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         let sem = sem.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.ok()?;
-            match tokio::time::timeout(
-                Duration::from_millis(220),
-                tokio::net::TcpStream::connect((ip.as_str(), 3001)),
-            )
-            .await
-            {
-                Ok(Ok(_)) => Some(ip),
-                _ => None,
-            }
+            if probe_camera(&ip).await { Some(ip) } else { None }
         }));
     }
     let mut hosts = Vec::new();
