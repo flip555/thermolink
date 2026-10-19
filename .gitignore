@@ -1,0 +1,6 @@
+/target
+*.h264
+*.raw
+*.mjpg
+.env
+data/

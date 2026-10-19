@@ -1,0 +1,31 @@
+[package]
+name = "thermolink"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Modular thermal-camera relay: one web UI, pluggable camera drivers"
+license = "MIT"
+repository = "https://github.com/flip555/thermolink"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "time",
+    "sync",
+    "signal",
+    "io-util",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+strip = true
