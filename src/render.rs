@@ -21,6 +21,35 @@ pub struct DisplaySettings {
     pub clip_hi: Option<f32>,
     pub span_lo: Option<f32>,
     pub span_hi: Option<f32>,
+    #[serde(default = "default_iso_bands")]
+    pub iso_bands: Vec<IsoBand>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsoBand {
+    pub lo: f32,
+    pub hi: f32,
+    pub colour: String,
+}
+
+fn default_iso_bands() -> Vec<IsoBand> {
+    const BANDS: &[(f32, f32, &str)] = &[
+        (25.0, 30.0, "#1f6feb"),
+        (30.0, 35.0, "#16c4c4"),
+        (35.0, 40.0, "#8b5cf6"),
+        (40.0, 45.0, "#e8b48c"),
+        (45.0, 50.0, "#ffe14d"),
+        (50.0, 55.0, "#ff9f1a"),
+        (55.0, 60.0, "#ff3b30"),
+    ];
+    BANDS
+        .iter()
+        .map(|(lo, hi, colour)| IsoBand {
+            lo: *lo,
+            hi: *hi,
+            colour: (*colour).into(),
+        })
+        .collect()
 }
 
 impl Default for DisplaySettings {
@@ -31,11 +60,12 @@ impl Default for DisplaySettings {
             clip_hi: None,
             span_lo: None,
             span_hi: None,
+            iso_bands: default_iso_bands(),
         }
     }
 }
 
-pub const PALETTES: &[&str] = &["rainbow", "ironbow", "whitehot", "blackhot"];
+pub const PALETTES: &[&str] = &["rainbow", "ironbow", "whitehot", "blackhot", "isotherm"];
 
 fn ramp(stops: &[(u16, [u8; 3])]) -> [[u8; 3]; 256] {
     let mut out = [[0u8; 3]; 256];
@@ -117,11 +147,25 @@ pub fn render(img: &ThermalImage, settings: &DisplaySettings) -> Vec<u8> {
     let span = (span_hi - span_lo).max(1);
 
     let palette = lut(&settings.palette);
+    let isotherm = settings.palette == "isotherm";
+    let bands: Vec<(f32, f32, [u8; 3])> = settings
+        .iso_bands
+        .iter()
+        .filter_map(|b| hex_colour(&b.colour).map(|c| (b.lo, b.hi, c)))
+        .collect();
+
     let mut rgb = vec![0u8; vals.len() * 3];
     for (i, &v) in vals.iter().enumerate() {
         let vi = v as i32;
         let pixel = if clip_lo.is_some_and(|lo| vi < lo) || clip_hi.is_some_and(|hi| vi > hi) {
             [255, 255, 255]
+        } else if isotherm {
+            let temp = v as f32 * cal.scale + cal.offset;
+            bands
+                .iter()
+                .find(|(lo, hi, _)| temp >= *lo && temp < *hi)
+                .map(|(_, _, colour)| *colour)
+                .unwrap_or([255, 255, 255])
         } else {
             let idx = (((vi - span_lo) * 255) / span).clamp(0, 255) as usize;
             palette[idx]
@@ -129,6 +173,17 @@ pub fn render(img: &ThermalImage, settings: &DisplaySettings) -> Vec<u8> {
         rgb[i * 3..i * 3 + 3].copy_from_slice(&pixel);
     }
     rgb
+}
+
+fn hex_colour(text: &str) -> Option<[u8; 3]> {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some([r, g, b])
 }
 
 pub fn render_jpeg(

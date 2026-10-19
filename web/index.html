@@ -177,6 +177,10 @@
       <label class="f">Span high <input id="spanHi" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
       <div class="row" style="margin-top:10px"><button id="apply">Apply</button><button id="reset">Reset</button></div>
       <div class="hint" id="bandState"></div>
+      <h2>Isotherm</h2>
+      <div id="isoBands"></div>
+      <div class="row" style="margin-top:8px"><button id="isoAdd">Add band</button><button id="isoApply">Apply bands</button></div>
+      <div class="hint">Used when the isotherm palette is selected.</div>
       <h2>Wipe</h2>
       <div class="anchors" id="anchors">
         <button data-anchor="left" class="active">Thermal right</button>
@@ -434,11 +438,48 @@ const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Nu
 $("apply").onclick = () => setDisplay({ clip_lo:numOrNull("clipLo"), clip_hi:numOrNull("clipHi"), span_lo:numOrNull("spanLo"), span_hi:numOrNull("spanHi") });
 $("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value=""; setDisplay({clip_lo:null,clip_hi:null,span_lo:null,span_hi:null}); };
 $("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; save("unit", state.unit); $("unit").textContent = "°"+state.unit; poll(); };
+function renderIsoBands(bands) {
+  const el = $("isoBands");
+  el.innerHTML = "";
+  (bands || []).forEach((b, i) => {
+    const row = document.createElement("div");
+    row.className = "row"; row.style.marginTop = "4px";
+    row.innerHTML =
+      `<input type="number" step="0.5" value="${b.lo}" data-iso="lo" data-i="${i}" style="width:62px">` +
+      `<input type="number" step="0.5" value="${b.hi}" data-iso="hi" data-i="${i}" style="width:62px">` +
+      `<input type="color" value="${b.colour}" data-iso="colour" data-i="${i}" style="width:40px;padding:2px">` +
+      `<button class="x" data-remove="${i}">×</button>`;
+    el.appendChild(row);
+  });
+  for (const b of el.querySelectorAll("button[data-remove]")) {
+    b.onclick = () => {
+      const bands = collectIsoBands().filter((_, j) => j !== Number(b.dataset.remove));
+      renderIsoBands(bands);
+    };
+  }
+}
+function collectIsoBands() {
+  const q = (sel) => [...$("isoBands").querySelectorAll(`[data-iso="${sel}"]`)];
+  const lo = q("lo"), hi = q("hi"), col = q("colour");
+  return lo.map((_, i) => ({
+    lo: Number(lo[i].value), hi: Number(hi[i].value), colour: col[i].value
+  }));
+}
+$("isoAdd").onclick = () => {
+  const bands = collectIsoBands();
+  const last = bands[bands.length - 1];
+  const lo = last ? last.hi : 25;
+  bands.push({ lo, hi: lo + 5, colour: "#ff3b30" });
+  renderIsoBands(bands);
+};
+$("isoApply").onclick = () => setDisplay({ iso_bands: collectIsoBands() });
+
 function fillDisplay(d) {
   if (!d) return;
   state.display = d; paintPalettes(state.palettes, d.palette);
   const map = {clipLo:d.clip_lo, clipHi:d.clip_hi, spanLo:d.span_lo, spanHi:d.span_hi};
   for (const [id,val] of Object.entries(map)) { const el=$(id); if (document.activeElement!==el) el.value = val===null?"":val; }
+  if (d.iso_bands) renderIsoBands(d.iso_bands);
 }
 
 // ---------- measurement ----------
@@ -634,7 +675,10 @@ $("snap").onclick = $("snapTop").onclick = async () => {
 };
 async function listSnaps() {
   try { const d=await (await fetch("/api/snapshots")).json();
-    $("snaps").innerHTML=(d.snapshots||[]).slice(0,10).map(n=>`<a href="/api/snapshots/${n}" target="_blank" rel="noreferrer">${n}</a>`).join("");
+    $("snaps").innerHTML=(d.snapshots||[]).slice(0,10).map(n=>
+      `<a href="/api/snapshots/${n}" target="_blank" rel="noreferrer">${n}</a>` +
+      `<a href="/api/reanalyze.jpg?name=${n}" target="_blank" rel="noreferrer" title="re-analyse with current palette">re</a>`
+    ).join("");
   } catch(e){}
 }
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };

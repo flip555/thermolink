@@ -376,6 +376,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/reference", post(set_reference).delete(clear_reference))
         .route("/api/dt.jpg", get(dt_image))
         .route("/api/dt.json", get(dt_json))
+        .route("/api/reanalyze.jpg", get(reanalyze_jpg))
+        .route("/api/reanalyze.json", get(reanalyze_json))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
         .route("/api/camera/settings", get(camera_settings))
         .route("/api/snapshot", post(snapshot))
@@ -1049,6 +1051,79 @@ async fn list_snapshots(State(st): State<Arc<AppState>>) -> Json<serde_json::Val
         .unwrap_or_default();
     names.sort_by(|a, b| b.cmp(a));
     Json(json!({ "snapshots": names }))
+}
+
+#[derive(Deserialize)]
+struct NameQuery {
+    name: String,
+}
+
+fn safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn load_snapshot(st: &AppState, name: &str) -> Result<ThermalImage, (StatusCode, String)> {
+    if !safe_name(name) {
+        return Err((StatusCode::BAD_REQUEST, "bad name".into()));
+    }
+    let dir = st.snapshots_dir();
+    let raw = std::fs::read(dir.join(format!("{name}.raw")))
+        .map_err(|_| (StatusCode::NOT_FOUND, "no stored frame".into()))?;
+    let meta: serde_json::Value = std::fs::read(dir.join(format!("{name}.json")))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let scale = meta["calibration"]["scale"].as_f64().unwrap_or(0.01) as f32;
+    let offset = meta["calibration"]["offset"].as_f64().unwrap_or(0.0) as f32;
+    let width = meta["w"].as_u64().unwrap_or(160) as u32;
+    let height = meta["h"].as_u64().unwrap_or(120) as u32;
+    if raw.len() != (width * height * 2) as usize {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "stored frame size mismatch".into()));
+    }
+    Ok(ThermalImage {
+        width,
+        height,
+        raw: Bytes::from(raw),
+        calibration: Calibration { scale, offset },
+    })
+}
+
+async fn reanalyze_jpg(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<NameQuery>,
+) -> Response {
+    let img = match load_snapshot(&st, &q.name) {
+        Ok(img) => img,
+        Err((code, msg)) => return (code, msg).into_response(),
+    };
+    let display = st.display.read().await.clone();
+    match render_jpeg(&img, &display, 85) {
+        Ok(jpeg) => jpeg_response(jpeg),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn reanalyze_json(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<NameQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let img = load_snapshot(&st, &q.name)?;
+    let stats = img.stats();
+    Ok(Json(json!({
+        "name": q.name,
+        "stats": {
+            "min_c": round2(stats.min_c),
+            "max_c": round2(stats.max_c),
+            "mean_c": round2(stats.mean_c),
+            "hot": [stats.hot.0, stats.hot.1],
+            "cold": [stats.cold.0, stats.cold.1],
+            "w": stats.width, "h": stats.height
+        },
+        "calibration": img.calibration,
+    })))
 }
 
 async fn snapshot_file(
