@@ -262,6 +262,11 @@ pub trait CameraDriver: Send + Sync {
 
     /// Connect and complete the vendor handshake.
     async fn open(&self) -> Result<Box<dyn CameraSession>>;
+
+    /// Read the camera's own configuration, if the family supports it.
+    async fn read_settings(&self) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
 }
 
 /// A live connection. `next_frame` must be cancellation-safe and should fail

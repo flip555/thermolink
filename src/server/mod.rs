@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::camera::{Calibration, CameraSpec, FramePayload, StreamKind, ThermalImage};
+use crate::camera::{Calibration, CameraDriver, CameraSpec, FramePayload, StreamKind, ThermalImage};
 use crate::render::{dt_jpeg, render_jpeg, DisplaySettings, PALETTES};
 use crate::stream::FrameHub;
 use crate::video::VideoTranscoder;
@@ -124,6 +124,7 @@ pub struct AppState {
     pub connected: Arc<AtomicBool>,
     pub source: String,
     pub video: Option<VideoTranscoder>,
+    pub driver: Arc<dyn CameraDriver>,
     pub data_dir: PathBuf,
     pub history: Arc<History>,
     pub regions: RwLock<Vec<Region>>,
@@ -141,6 +142,7 @@ impl AppState {
         source: String,
         connected: Arc<AtomicBool>,
         video: Option<VideoTranscoder>,
+        driver: Arc<dyn CameraDriver>,
         data_dir: PathBuf,
     ) -> Self {
         let calibration = std::fs::read_to_string(data_dir.join("calibration.json"))
@@ -186,6 +188,7 @@ impl AppState {
             connected,
             source,
             video,
+            driver,
             data_dir,
             history: Arc::new(History::new()),
             regions: RwLock::new(regions),
@@ -374,6 +377,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/dt.jpg", get(dt_image))
         .route("/api/dt.json", get(dt_json))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
+        .route("/api/camera/settings", get(camera_settings))
         .route("/api/snapshot", post(snapshot))
         .route("/api/snapshots", get(list_snapshots))
         .route("/api/snapshots/{name}", get(snapshot_file))
@@ -918,6 +922,19 @@ async fn dt_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 struct CalibrationFile {
     scale: f32,
     offset: f32,
+}
+
+async fn camera_settings(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    match st.driver.read_settings().await {
+        Ok(Some(settings)) => Ok(Json(settings)),
+        Ok(None) => Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "camera did not report its settings".into(),
+        )),
+        Err(e) => Err((StatusCode::BAD_GATEWAY, e.to_string())),
+    }
 }
 
 async fn get_calibration(State(st): State<Arc<AppState>>) -> Json<Calibration> {

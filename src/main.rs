@@ -151,6 +151,7 @@ async fn serve(
         driver.id().to_string(),
         connected.clone(),
         video,
+        driver.clone(),
         data_dir,
     ));
 

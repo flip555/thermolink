@@ -10,6 +10,7 @@
 
 pub mod handshake;
 pub mod protocol;
+pub mod settings;
 pub mod thermal;
 
 use std::collections::HashMap;
@@ -92,6 +93,31 @@ impl CameraDriver for QianliDriver {
 
     fn spec(&self) -> CameraSpec {
         self.spec_with(self.calibration)
+    }
+
+    async fn read_settings(&self) -> Result<Option<serde_json::Value>> {
+        let mut s = connect(self.host, self.control_port).await?;
+        s.write_all(&p::register(0x6c, 0)).await?;
+        let mut buf: Vec<u8> = Vec::with_capacity(512);
+        let mut chunk = [0u8; 512];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match timeout(left, s.read(&mut chunk)).await {
+                Ok(Ok(0)) | Err(_) => break,
+                Ok(Ok(n)) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if buf.len() >= 464 {
+                        break;
+                    }
+                }
+                Ok(Err(_)) => break,
+            }
+        }
+        Ok(settings::parse(&buf))
     }
 
     async fn open(&self) -> Result<Box<dyn CameraSession>> {

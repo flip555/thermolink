@@ -257,6 +257,9 @@
         <span>Video</span><span id="vlink">–</span>
         <span>Version</span><span id="ver">–</span>
       </div>
+      <h2>Camera settings</h2>
+      <div class="row"><button id="camRead">Read from camera</button></div>
+      <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span>not read</span></div>
       <h2>Calibration</h2>
       <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
       <label class="f">Offset <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
@@ -578,6 +581,15 @@ $("addAlarm").onclick = async () => {
   const r = await fetch("/api/alarms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   $("alarmState").textContent = r.ok ? "added" : "error: " + (await r.text());
   if (r.ok) loadAlarms();
+};
+
+$("camRead").onclick = async () => {
+  $("camSettings").innerHTML = "<span>Reading…</span><span></span>";
+  const r = await fetch("/api/camera/settings");
+  if (!r.ok) { $("camSettings").innerHTML = `<span>Error</span><span>${await r.text()}</span>`; return; }
+  const d = await r.json();
+  $("camSettings").innerHTML = Object.entries(d)
+    .map(([k,v]) => `<span>${k}</span><span>${v}</span>`).join("");
 };
 
 // ---- notifications -----------------------------------------------------
