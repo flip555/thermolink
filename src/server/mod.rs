@@ -664,7 +664,9 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "source": st.source,
         "connected": st.connected(),
         "ready": latest.is_some(),
-        "video": st.video.is_some(),
+        "video": st.video.as_ref().is_some_and(|v| v.alive()),
+        "video_restarts": st.video.as_ref().map(|v| v.restarts()).unwrap_or(0),
+        "video_error": st.video.as_ref().and_then(|v| v.last_error()),
         "seq": latest.map(|f| f.seq).unwrap_or(0),
     }))
 }
@@ -678,7 +680,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
         return Json(json!({
             "ready": false,
             "connected": st.connected(),
-            "video": st.video.is_some(),
+            "video": st.video.as_ref().is_some_and(|v| v.alive()),
             "display": display,
             "align": align,
             "calibration": calibration,
@@ -698,7 +700,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
     Json(json!({
         "ready": true,
         "connected": st.connected(),
-        "video": st.video.is_some(),
+        "video": st.video.as_ref().is_some_and(|v| v.alive()),
         "seq": frame.seq,
         "stats": {
             "min_c": round2(stats.min_c),
@@ -769,7 +771,14 @@ async fn thermal_mjpg(State(st): State<Arc<AppState>>) -> Response {
 }
 
 async fn video_jpg(State(st): State<Arc<AppState>>) -> Response {
-    match st.video.as_ref().and_then(|v| v.latest()) {
+    let Some(video) = st.video.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "ffmpeg unavailable").into_response();
+    };
+    if !video.alive() {
+        let reason = video.last_error().unwrap_or_else(|| "transcoder restarting".into());
+        return (StatusCode::SERVICE_UNAVAILABLE, reason).into_response();
+    }
+    match video.latest() {
         Some(jpeg) => jpeg_response(jpeg.to_vec()),
         None => (StatusCode::SERVICE_UNAVAILABLE, "no visible frame yet").into_response(),
     }
@@ -784,6 +793,7 @@ async fn video_mjpg(State(st): State<Arc<AppState>>) -> Response {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
+            if !video.alive() { break; }
             let Some(jpeg) = video.latest() else { continue };
             yield Ok::<Bytes, std::io::Error>(Bytes::from(multipart_head(&jpeg)));
             yield Ok(jpeg);
