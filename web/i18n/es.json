@@ -178,5 +178,11 @@
   "tab.capture": "Captura",
   "tab.display": "Pantalla",
   "tab.measure": "Medir",
-  "title.wipebar": "arrastra para mover el divisor"
+  "title.wipebar": "arrastra para mover el divisor",
+  "btn.detect": "Detección automática",
+  "label.profile": "Perfil",
+  "label.usbId": "ID USB",
+  "label.confidence": "Confianza",
+  "label.tested": "Validado",
+  "hint.uncalibrated": "Sin calibrar — la medición de temperatura está desactivada."
 }

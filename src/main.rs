@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use thermolink::camera::{registry, CameraDriver, FramePayload};
 use thermolink::config::{CameraConfig, Config};
-use thermolink::server::{self, AppState};
+use thermolink::server::{self, AppState, CameraRuntime};
 use thermolink::stream::FrameHub;
 use tracing::{info, warn};
 
@@ -37,6 +37,9 @@ enum Command {
         control_port: u16,
         #[arg(long, default_value_t = 3000)]
         media_port: u16,
+        /// UVC profile id (for example topdon_tc001); omit to auto-detect.
+        #[arg(long)]
+        profile: Option<String>,
         /// How long to watch frames after the handshake.
         #[arg(long, default_value_t = 4)]
         seconds: u64,
@@ -52,6 +55,9 @@ enum Command {
         control_port: u16,
         #[arg(long, default_value_t = 3000)]
         media_port: u16,
+        /// UVC profile id (for example topdon_tc001); omit to auto-detect.
+        #[arg(long)]
+        profile: Option<String>,
         /// Stop after N seconds; 0 means run until Ctrl-C.
         #[arg(long, default_value_t = 0)]
         seconds: u64,
@@ -73,6 +79,9 @@ enum Command {
         control_port: u16,
         #[arg(long, default_value_t = 3000)]
         media_port: u16,
+        /// UVC profile id (for example topdon_tc001); omit to auto-detect.
+        #[arg(long)]
+        profile: Option<String>,
         #[arg(long, default_value = "0.0.0.0:8099")]
         bind: String,
         /// Use the simulated camera — no hardware needed.
@@ -96,6 +105,16 @@ async fn main() -> Result<()> {
     match Cli::parse().cmd {
         Command::Drivers => {
             println!("{}", registry::KNOWN.join("\n"));
+            println!("profiles:");
+            for profile in registry::profiles() {
+                println!(
+                    "  {} — {} (tested: {}, confidence: {:?})",
+                    profile.info.id,
+                    profile.info.display_name,
+                    profile.info.tested,
+                    profile.info.confidence
+                );
+            }
             Ok(())
         }
         Command::Config => {
@@ -107,13 +126,15 @@ async fn main() -> Result<()> {
             host,
             control_port,
             media_port,
+            profile,
             seconds,
-        } => probe(driver, host, control_port, media_port, seconds).await,
+        } => probe(driver, host, control_port, media_port, profile, seconds).await,
         Command::Stream {
             driver,
             host,
             control_port,
             media_port,
+            profile,
             seconds,
             log_every_frames,
         } => {
@@ -122,6 +143,7 @@ async fn main() -> Result<()> {
                 host,
                 control_port,
                 media_port,
+                profile,
                 seconds,
                 log_every_frames,
             )
@@ -132,10 +154,23 @@ async fn main() -> Result<()> {
             host,
             control_port,
             media_port,
+            profile,
             bind,
             demo,
             data_dir,
-        } => serve(driver, host, control_port, media_port, bind, demo, data_dir).await,
+        } => {
+            serve(
+                driver,
+                host,
+                control_port,
+                media_port,
+                profile,
+                bind,
+                demo,
+                data_dir,
+            )
+            .await
+        }
     }
 }
 
@@ -187,11 +222,13 @@ async fn mark_https(
     next.run(req).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve(
     driver: String,
     host: String,
     control_port: u16,
     media_port: u16,
+    profile: Option<String>,
     bind: String,
     demo: bool,
     data_dir: PathBuf,
@@ -201,12 +238,19 @@ async fn serve(
         std::fs::read_to_string(data_dir.join("camera.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
-    let (driver, host, control_port, media_port) = match saved {
-        Some(c) => (c.driver, c.host, c.control_port, c.media_port),
-        None => (driver, host, control_port, media_port),
-    };
-    let driver = if demo { "mock".to_string() } else { driver };
-    let cfg = camera_config(driver, host, control_port, media_port);
+    let mut cfg = saved.unwrap_or_else(|| camera_config(driver, host, control_port, media_port));
+    if demo {
+        cfg.driver = "mock".to_string();
+    }
+    if cfg.profile.is_none() {
+        cfg.profile = profile;
+    }
+    if registry::is_uvc(&cfg.driver) {
+        if let Err(e) = registry::resolve(&mut cfg).await {
+            warn!(error = %e, "UVC detection failed; using the uncalibrated fallback");
+            cfg.profile = Some("uvc_generic".into());
+        }
+    }
     let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);
     let hub = FrameHub::new(512);
     let connected = Arc::new(AtomicBool::new(false));
@@ -281,6 +325,15 @@ async fn camera_supervisor(st: Arc<AppState>) {
         match tokio::time::timeout(Duration::from_secs(20), driver.open()).await {
             Ok(Ok(mut session)) => {
                 st.connected.store(true, Ordering::Relaxed);
+                // The pre-open spec cannot know a negotiated UVC frame size or
+                // the device auto-detection selected. Adopt the session's
+                // spec so /api/spec and the UI reflect the live camera.
+                let session_spec = session.spec().clone();
+                let runtime = st.camera.load_full();
+                st.camera.store(Arc::new(CameraRuntime {
+                    driver: runtime.driver.clone(),
+                    spec: session_spec,
+                }));
                 info!(driver = driver.id(), "camera session open");
                 loop {
                     tokio::select! {
@@ -323,9 +376,14 @@ async fn probe(
     host: String,
     control_port: u16,
     media_port: u16,
+    profile: Option<String>,
     seconds: u64,
 ) -> Result<()> {
-    let cfg = camera_config(driver, host, control_port, media_port);
+    let mut cfg = camera_config(driver, host, control_port, media_port);
+    cfg.profile = profile;
+    if registry::is_uvc(&cfg.driver) {
+        registry::resolve(&mut cfg).await?;
+    }
     let driver = registry::build(&cfg)?;
     let spec = driver.spec();
     println!("{}", serde_json::to_string_pretty(&spec)?);
@@ -381,10 +439,15 @@ async fn stream(
     host: String,
     control_port: u16,
     media_port: u16,
+    profile: Option<String>,
     seconds: u64,
     log_every_frames: u64,
 ) -> Result<()> {
-    let cfg = camera_config(driver, host, control_port, media_port);
+    let mut cfg = camera_config(driver, host, control_port, media_port);
+    cfg.profile = profile;
+    if registry::is_uvc(&cfg.driver) {
+        registry::resolve(&mut cfg).await?;
+    }
     let driver = registry::build(&cfg)?;
     let hub = FrameHub::new(256);
     let deadline = (seconds > 0).then(|| Instant::now() + Duration::from_secs(seconds));

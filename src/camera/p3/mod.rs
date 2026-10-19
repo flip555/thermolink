@@ -126,9 +126,12 @@ impl CameraDriver for P3Driver {
                 bit_depth: 16,
                 calibration: self.model.calibration(),
             }),
+            profile: None,
+            device: None,
             capabilities: Capabilities {
                 thermal: true,
                 visible: false,
+                radiometric: true,
                 discover: false,
                 network_settings: false,
                 reboot: false,
@@ -451,6 +454,7 @@ pub fn parse_frame(frame: &[u8], model: Model) -> anyhow::Result<ThermalImage> {
         height: height as u32,
         raw: Bytes::from(raw),
         calibration: model.calibration(),
+        lut: None,
     })
 }
 

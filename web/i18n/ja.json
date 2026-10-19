@@ -178,5 +178,11 @@
   "tab.capture": "キャプチャ",
   "tab.display": "表示",
   "tab.measure": "計測",
-  "title.wipebar": "ドラッグして分割線を移動"
+  "title.wipebar": "ドラッグして分割線を移動",
+  "btn.detect": "自動検出",
+  "label.profile": "プロファイル",
+  "label.usbId": "USB ID",
+  "label.confidence": "信頼度",
+  "label.tested": "検証済み",
+  "hint.uncalibrated": "未校正 — 温度測定は無効です。"
 }

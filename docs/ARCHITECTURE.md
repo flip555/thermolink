@@ -30,21 +30,27 @@ pub trait CameraSession: Send {
 
 A driver owns transport, framing, pixel layout and calibration. A frame is
 either `FramePayload::Thermal(ThermalImage)` or `FramePayload::Video(Bytes)`.
-Thermal images carry raw `u16` samples plus a `Calibration { scale, offset }`, so
-rendering never performs vendor-specific math.
+Thermal images carry raw `u16` samples plus a linear `Calibration { scale, offset }`
+and an optional 65 536-entry temperature LUT. Rendering calls
+`ThermalImage::celsius()`, so table-calibrated sensors do not leak vendor math
+above the driver boundary.
 
 `CameraSpec` carries:
 
-- `driver`, `model`
+- `driver`, `model`, optional `profile` and `device`
 - `thermal: Option<ThermalStream>` (size, bit depth, calibration)
 - `video: Option<VideoStream>` (size, codec hint, fps)
-- `capabilities`: thermal, visible, discover, network settings, reboot, controls
+- `capabilities`: thermal, visible, radiometric, discover, network settings,
+  reboot, controls
 
 Capabilities are static facts. The UI hides modes and controls from them; the
 API still enforces them server-side.
 
 Qianli is `src/camera/qianli/`; the simulator is `src/camera/mock.rs`; P3/P1 is
 `src/camera/p3/` (parser and calibration only — see [Drivers](DRIVERS.md)).
+The UVC family is `src/camera/uvc_radiometric/`: one `CameraDriver`, data-only
+profiles (`topdon_tc001`, `infiray_p2pro`, `uvc_generic` in M1), a fingerprint
+table, and a transport trait with a Linux V4L2/ffmpeg backend plus a mock.
 
 ## 2. FrameHub
 
@@ -109,6 +115,9 @@ in-memory ring and flushes clips.
 
 - Add a driver: implement `CameraDriver` in `src/camera/<family>/`, add one arm
   to `registry.rs`, set `capabilities`, done. No server or UI change.
+- Add a UVC profile: add one `RadiometricProfile` table entry (and a
+  `FrameLayout` variant only if the pixel layout is genuinely new). Do not
+  copy a driver.
 - Add a control: extend the driver's session API and advertise it in
   `capabilities.controls`; add a descriptor so the UI can render it.
 - Never import a concrete driver from `src/server/`.

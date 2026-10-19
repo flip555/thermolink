@@ -178,5 +178,11 @@
   "tab.capture": "采集",
   "tab.display": "显示",
   "tab.measure": "测量",
-  "title.wipebar": "拖动以移动分隔线"
+  "title.wipebar": "拖动以移动分隔线",
+  "btn.detect": "自动检测",
+  "label.profile": "配置",
+  "label.usbId": "USB ID",
+  "label.confidence": "置信度",
+  "label.tested": "已验证",
+  "hint.uncalibrated": "未校准 — 温度测量已禁用。"
 }

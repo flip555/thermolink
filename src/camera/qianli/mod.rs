@@ -90,6 +90,7 @@ impl QianliDriver {
             capabilities: super::Capabilities {
                 thermal: true,
                 visible: true,
+                radiometric: true,
                 discover: true,
                 network_settings: true,
                 reboot: true,
@@ -101,6 +102,8 @@ impl QianliDriver {
                 bit_depth: 16,
                 calibration,
             }),
+            profile: None,
+            device: None,
         }
     }
 }
@@ -165,6 +168,38 @@ impl CameraDriver for QianliDriver {
             .cloned()
             .context("settings changes must be an object")?;
         settings_write::write(self.host, self.control_port, &map).await
+    }
+
+    async fn discover(&self) -> Result<serde_json::Value> {
+        let [a, b, c, _] = self.host.octets();
+        let base = format!("{a}.{b}.{c}");
+        let sem = Arc::new(tokio::sync::Semaphore::new(64));
+        let mut tasks = Vec::new();
+        for last in 1..=254u8 {
+            let ip = format!("{base}.{last}");
+            let port = self.control_port;
+            let sem = sem.clone();
+            tasks.push(tokio::spawn(async move {
+                let _permit = sem.acquire_owned().await.ok()?;
+                if probe_host(&ip, port).await {
+                    Some(ip)
+                } else {
+                    None
+                }
+            }));
+        }
+        let mut hosts = Vec::new();
+        for task in tasks {
+            if let Ok(Some(ip)) = task.await {
+                hosts.push(ip);
+            }
+        }
+        hosts.sort_by_key(|ip| ip.rsplit('.').next().and_then(|n| n.parse::<u16>().ok()));
+        Ok(serde_json::json!({
+            "hosts": hosts,
+            "devices": [],
+            "scanned": format!("{base}.0/24")
+        }))
     }
 
     async fn open(&self) -> Result<Box<dyn CameraSession>> {
@@ -375,6 +410,7 @@ impl CameraSession for QianliSession {
                                 height: HEIGHT,
                                 raw: frame.raw,
                                 calibration,
+                                lut: None,
                             }),
                         })
                     } else {
@@ -547,6 +583,26 @@ async fn read_flag(s: &mut TcpStream) -> Result<[u8; 4]> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// One lightweight registration probe, used only by discovery.
+async fn probe_host(ip: &str, port: u16) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Ok(Ok(mut socket)) =
+        timeout(Duration::from_millis(300), TcpStream::connect((ip, port))).await
+    else {
+        return false;
+    };
+    let packet = p::register(0x6c, 0);
+    if socket.write_all(&packet).await.is_err() {
+        return false;
+    }
+    let mut buf = vec![0u8; 1024];
+    let n = match timeout(Duration::from_millis(700), socket.read(&mut buf)).await {
+        Ok(Ok(n)) => n,
+        _ => 0,
+    };
+    n >= 70 && buf[..n].windows(4).any(|w| w == [0x78, 0xb6, 0x3a, 0x12])
 }
 
 #[cfg(test)]

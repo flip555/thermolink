@@ -73,6 +73,49 @@ unsupported operations return an error rather than pretending to work.
 - 160×120 synthetic thermal frames, no visible stream.
 - Used by `serve --demo` and the test suite.
 
+### `uvc_radiometric` — unified UVC family (M1, Linux)
+
+One driver, data-only profiles. M1 ships three profiles:
+
+| profile | VID:PID | layout | radiometry | tested |
+|---------|---------|--------|------------|--------|
+| `topdon_tc001` | `0bda:5830` | 256×384 YUYV; bottom half u16 LE, 256×192 | linear, 1/64 K | no |
+| `infiray_p2pro` | `0bda:5830` | same as TC001 | linear, 1/64 K | no |
+| `uvc_generic` | any UVC | best-effort raw view | unknown; `radiometric: false` | no |
+
+- Transport: Linux V4L2 through ffmpeg's `v4l2` input. ffmpeg is already a
+  runtime dependency for the visible-stream transcode; no libclang/bindgen is
+  required.
+- Detection order: explicit `camera.json` `profile` → VID/PID + product string
+  → geometry/ambiguity → `uvc_generic` fallback. Detection never blocks
+  streaming because a device is unknown.
+- `0bda:5830` is shared by the TC001, P2 Pro, TS001, MaAnt and UTi261M. M1
+  returns both candidate profiles and marks the result **ambiguous**; it never
+  silently claims one model. Use `profile` in `camera.json` or the UI profile
+  selector to force one.
+- `uvc_generic` streams a best-effort raw view with `radiometric: false`.
+  Temperature measurement is hidden by the UI and rejected by the API.
+- Controls (shutter, gain, palette) are **not exposed in M1**. The P2 Pro
+  vendor command set is documented for a later phase.
+- **No hardware validation has been performed by this project.** Every new
+  profile is `tested: false`; community sources are listed in the profile
+  metadata and `/api/drivers`.
+
+`camera.json` for an explicit M1 profile:
+
+```json
+{
+  "driver": "uvc_radiometric",
+  "profile": "topdon_tc001",
+  "auto_detect": false,
+  "device": { "vid": 3034, "pid": 22576, "path": null }
+}
+```
+
+`GET /api/camera/detect` returns candidates, scores, reasons, `tested`,
+`confidence`, and `ambiguous`. `POST /api/camera/select` accepts `profile` and
+`device` alongside `driver`.
+
 ## Adding a driver
 
 1. Create `src/camera/<family>/` with a `CameraDriver` + `CameraSession`.

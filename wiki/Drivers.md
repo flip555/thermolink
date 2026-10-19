@@ -4,6 +4,7 @@
 |----|-----------|---------|---------|--------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full |
 | `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser; hardware validation pending |
+| `uvc_radiometric` | USB/UVC (Linux) | 256×192 | — | unified profiles; M1: TC001/P2 Pro + generic fallback; **untested** |
 | `mock` | in-process | 160×120 | — | simulator |
 
 A driver owns transport, framing, pixels and calibration. The server consumes
@@ -12,8 +13,9 @@ A driver owns transport, framing, pixels and calibration. The server consumes
 ## Capabilities
 
 `CameraSpec.capabilities` advertises thermal, visible, discovery, network
-settings, reboot and a controls list. The UI hides modes and fields that do not
-apply; the API still validates. A P3 therefore shows no video modes.
+settings, reboot, radiometric calibration and a controls list. The UI hides
+modes and fields that do not apply; the API still validates. A P3 therefore
+shows no video modes, and `uvc_generic` hides temperature measurement.
 
 ## Hot-swap
 
@@ -21,6 +23,10 @@ apply; the API still validates. A P3 therefore shows no video modes.
 `{"driver":"qianli","host":"192.168.1.64"}` stores `camera.json`, swaps the
 `CameraRuntime` in an `ArcSwap`, and bumps a generation watch; the supervisor
 closes the old session and opens the new one. No process restart.
+
+For the UVC family, `GET /api/camera/detect` returns candidates and
+`POST /api/camera/select` accepts `profile` and `device`. `0bda:5830` is shared
+by several models; the result is marked ambiguous instead of guessing.
 
 ## Adding a driver
 
@@ -42,3 +48,6 @@ driver advertises them.
 The P3/P1 USB path uses `nusb` and needs the udev rule from
 [Installation](Installation) or `docs/DEPLOYMENT.md`; hardware validation is
 still pending.
+
+The UVC path uses Linux V4L2 through ffmpeg. All new UVC profiles are
+`tested: false`; see [docs/DRIVERS.md](https://github.com/flip555/thermolink/blob/main/docs/DRIVERS.md).
