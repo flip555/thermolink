@@ -2413,6 +2413,13 @@ async fn snapshot(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     std::fs::write(dir.join(format!("{name}.raw")), &img.raw)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let has_video = if let Some(frame) = st.video.as_ref().and_then(|v| v.latest()) {
+        std::fs::write(dir.join(format!("{name}.vis")), &frame)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        true
+    } else {
+        false
+    };
     let regions = st.regions.read().await.clone();
     let mut rstats: Vec<serde_json::Value> = regions.iter().filter_map(|r| region_stats(&img, r)).collect();
     attach_deltas(&img, &regions, &mut rstats);
@@ -2432,6 +2439,7 @@ async fn snapshot(
         "regions": regions,
         "region_stats": rstats,
         "reference_at": reference_at,
+        "has_video": has_video,
         "w": img.width, "h": img.height,
     });
     std::fs::write(
@@ -2650,13 +2658,15 @@ async fn snapshot_file(
     State(st): State<Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    if name.contains("..")
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
-    let path = st.snapshots_dir().join(format!("{name}.jpg"));
+    let file = if name.ends_with(".vis") { name.clone() } else { format!("{name}.jpg") };
+    let path = st.snapshots_dir().join(file);
     match std::fs::read(path) {
         Ok(bytes) => jpeg_response(bytes),
         Err(_) => (StatusCode::NOT_FOUND, "no such snapshot").into_response(),

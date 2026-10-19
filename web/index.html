@@ -393,17 +393,6 @@
   </div>
 </div>
 
-<div class="authmodal" id="reModal">
-  <div class="authcard" style="width:min(920px,94vw);max-height:92vh;overflow:auto">
-    <h1>Snapshot re-analysis</h1>
-    <div class="hint" id="reTitle"></div>
-    <img id="reImg" style="width:100%;border-radius:8px;display:block" alt="re-analysis">
-    <div class="kv" id="reStats" style="margin-top:8px"></div>
-    <div class="list" id="reRegions"></div>
-    <div class="row" style="margin-top:8px"><button id="reClose">Close</button></div>
-  </div>
-</div>
-
 <div class="authmodal" id="auth">
   <form class="authcard" id="authForm">
     <h1 id="authTitle" data-i18n="auth.signIn">Sign in</h1>
@@ -487,7 +476,7 @@ function initLangPicker() {
 
 const state = {
   unit: saved("unit", "C"), display: null, initialized: false, palettes: [],
-  mode: saved("mode", "thermal"), codecActive: false, caps: null, anchor: saved("anchor", "left"),
+  mode: saved("mode", "thermal"), codecActive: false, caps: null, reanalysis: null, reanalysisVideo: false, anchor: saved("anchor", "left"),
   split: Number(saved("split", "50")), dt: saved("dt", "0") === "1",
   w: 160, h: 120, regions: [], alarms: [], history: [], lastAlarm: null, dismissed: null,
   polyMode: false, polyPts: [], drawMode: "none", peaks: [], peaksSig: "", pipSize: "medium", chartWin: 60, feedStarted: false, visStarted: false,
@@ -799,7 +788,7 @@ function paintPalettes(list, current) {
 async function setDisplay(patch) {
   const next = Object.assign({}, state.display || {}, patch);
   const r = await fetch("/api/display", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(next) });
-  if (r.ok) { state.display = await r.json(); syncPaletteVisibility(state.display.palette); paintPalettes(state.palettes, state.display.palette); $("bandState").textContent = "applied"; setTimeout(()=>$("bandState").textContent="",1200); }
+  if (r.ok) { state.display = await r.json(); syncPaletteVisibility(state.display.palette); paintPalettes(state.palettes, state.display.palette); if (state.reanalysis) $("feed").src = withToken("/api/reanalyze.jpg?name=" + encodeURIComponent(state.reanalysis) + "&t=" + Date.now()); $("bandState").textContent = "applied"; setTimeout(()=>$("bandState").textContent="",1200); }
   else $("bandState").textContent = "error: " + (await r.text());
 }
 const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Number($(id).value)) ? Number($(id).value) : null);
@@ -892,7 +881,7 @@ function toThermal(e) {
   return [Math.floor(x*state.w), Math.floor(y*state.h)];
 }
 viewer.addEventListener("pointerdown", (e) => {
-  if (state.drawMode === "none") return;
+  if (state.drawMode === "none" || state.reanalysis) return;
   e.preventDefault();
   drag = toThermal(e);
   if (state.drawMode === "poly") { viewer.setPointerCapture(e.pointerId); return; }
@@ -1241,19 +1230,37 @@ async function listSnaps() {
 async function openReanalysis(name) {
   try {
     const d = await (await fetch("/api/reanalyze.json?name=" + encodeURIComponent(name))).json();
-    const s = d.stats || {};
-    $("reTitle").textContent = name + (d.display && d.display.palette ? " · " + d.display.palette : "");
-    $("reImg").src = withToken("/api/reanalyze.jpg?name=" + encodeURIComponent(name) + "&t=" + Date.now());
-    $("reStats").innerHTML =
-      `<span>Min</span><span>${fmt(s.min_c)}</span><span>Max</span><span>${fmt(s.max_c)}</span>` +
-      `<span>Mean</span><span>${fmt(s.mean_c)}</span>`;
-    $("reRegions").innerHTML = (d.regions || []).length
-      ? d.regions.map(r => `<div class="snaprow"><span class="grow">${r.name}</span><span class="val">${fmt(r.min_c)} / ${fmt(r.avg_c)} / ${fmt(r.max_c)}</span></div>`).join("")
-      : "";
-    $("reModal").classList.add("show");
-  } catch(e) { $("reTitle").textContent = "re-analysis failed"; }
+    state.reanalysis = name;
+    state.reanalysisVideo = !!d.has_video;
+    state.regions = d.regions || [];
+    drawRegions();
+    $("reName").textContent = name;
+    $("reBanner").style.display = "flex";
+    state.codecActive = false;
+    if (vcanvas) vcanvas.style.display = "none";
+    state.feedStarted = true;
+    $("feed").src = withToken("/api/reanalyze.jpg?name=" + encodeURIComponent(name) + "&t=" + Date.now());
+    const vis = $("vis");
+    if (state.reanalysisVideo) {
+      vis.style.display = "block";
+      vis.src = withToken("/api/snapshots/" + encodeURIComponent(name) + ".vis&t=" + Date.now());
+      state.visStarted = true;
+    } else {
+      vis.removeAttribute("src"); vis.style.display = "none"; state.visStarted = false;
+    }
+    applyWipe();
+  } catch(e) { $("reName").textContent = "re-analysis failed"; }
 }
-$("reClose").onclick = () => $("reModal").classList.remove("show");
+function exitReanalysis() {
+  state.reanalysis = null; state.reanalysisVideo = false;
+  $("reBanner").style.display = "none";
+  state.feedStarted = false; state.visStarted = false; state.codecActive = false;
+  $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); state.feedStarted = true;
+  $("vis").style.display = "block";
+  $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); state.visStarted = true;
+  loadRegions();
+}
+$("reExit").onclick = exitReanalysis;
 
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
 $("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELETE"}); $("dtStats").innerHTML="<span>ΔT</span><span>no reference</span>"; };
