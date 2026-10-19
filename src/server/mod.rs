@@ -575,6 +575,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/compare.json", get(compare_json))
         .route("/api/compare.jpg", get(compare_jpg))
         .route("/api/dt.jpg", get(dt_image))
+        .route("/api/dt.mjpg", get(dt_mjpg))
         .route("/api/dt.json", get(dt_json))
         .route("/api/reanalyze.jpg", get(reanalyze_jpg))
         .route("/api/reanalyze.json", get(reanalyze_json))
@@ -1662,6 +1663,24 @@ async fn dt_image(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>
         Ok(jpeg) => jpeg_response(jpeg),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+async fn dt_mjpg(State(st): State<Arc<AppState>>) -> Response {
+    let stream = async_stream::stream! {
+        let mut tick = tokio::time::interval(Duration::from_millis(100));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let Some(img) = st.thermal_image().await else { continue };
+            let Some(reference) = st.reference.read().await.clone() else { continue };
+            let span = st.display.read().await.dt_span;
+            let Ok(jpeg) = dt_jpeg(&img, &reference, span, 80) else { continue };
+            yield Ok::<Bytes, std::io::Error>(Bytes::from(multipart_head(&jpeg)));
+            yield Ok(Bytes::from(jpeg));
+            yield Ok(Bytes::from_static(b"\r\n"));
+        }
+    };
+    mjpeg_response(stream)
 }
 
 async fn dt_json(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>) -> Json<serde_json::Value> {
