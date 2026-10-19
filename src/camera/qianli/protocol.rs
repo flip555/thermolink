@@ -140,17 +140,17 @@ mod tests {
     fn probe_matches_captured_bytes() {
         // Captured packet for the thermal value, port 3000.
         let expected = hex(
-            "78b63a12766964656f2073657276657200cccccccccccccccccccccc0100ac140155b80b010000002800000021d36c87",
+            "78b63a12766964656f2073657276657200cccccccccccccccccccccc0100c0a80140b80b010000002800000021d36c87",
         );
-        assert_eq!(probe(Ipv4Addr::new(172, 20, 1, 85), 3000, 1), expected);
+        assert_eq!(probe(Ipv4Addr::new(192, 168, 1, 64), 3000, 1), expected);
     }
 
     #[test]
     fn probe_visible_matches_capture() {
         let expected = hex(
-            "78b63a12766964656f2073657276657200cccccccccccccccccccccc0100ac140155b80b000000002800000021d36c87",
+            "78b63a12766964656f2073657276657200cccccccccccccccccccccc0100c0a80140b80b000000002800000021d36c87",
         );
-        assert_eq!(probe(Ipv4Addr::new(172, 20, 1, 85), 3000, 0), expected);
+        assert_eq!(probe(Ipv4Addr::new(192, 168, 1, 64), 3000, 0), expected);
     }
 
     #[test]
