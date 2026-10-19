@@ -402,6 +402,18 @@
 const $ = (id) => document.getElementById(id);
 const saved = (k, d) => { try { const v = localStorage.getItem("thermolink." + k); return v === null ? d : v; } catch(e) { return d; } };
 const save = (k, v) => { try { localStorage.setItem("thermolink." + k, v); } catch(e) {} };
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  try {
+    const token = localStorage.getItem("thermolink.token");
+    if (token) {
+      const headers = new Headers(init.headers || {});
+      if (!headers.has("Authorization")) headers.set("Authorization", "Bearer " + token);
+      init = Object.assign({}, init, { headers });
+    }
+  } catch (e) {}
+  return nativeFetch(input, init);
+};
 
 // ---------- i18n ----------
 const LANGS = [
@@ -547,10 +559,12 @@ $("authForm").onsubmit = async (e) => {
   const headers = { "Content-Type": "application/json" };
   if (authMode === "setup" && $("authToken").value.trim()) headers["X-Setup-Token"] = $("authToken").value.trim();
   const r = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
-  if (r.ok) location.reload();
-  else $("authErr").textContent = await r.text();
+  if (r.ok) {
+    try { const j = await r.json(); if (j.token) localStorage.setItem("thermolink.token", j.token); } catch (e) {}
+    location.reload();
+  } else $("authErr").textContent = await r.text();
 };
-$("logout").onclick = async () => { await fetch("/api/logout", { method:"POST" }); location.reload(); };
+$("logout").onclick = async () => { localStorage.removeItem("thermolink.token"); await fetch("/api/logout", { method:"POST" }); location.reload(); };
 
 // ---------- account (admin only) ----------
 function acctMsg(text, isErr = false) {
@@ -1245,7 +1259,7 @@ for (const b of document.querySelectorAll("button[data-pip]")) b.onclick = () =>
 async function poll() {
   try {
     const res = await fetch("/api/thermal.json",{cache:"no-store"});
-    if (res.status === 401) { initAuth(); return; }
+    if (res.status === 401) { localStorage.removeItem("thermolink.token"); initAuth(); return; }
     const d = await res.json();
     const connected=!!d.connected, ready=!!d.ready;
     $("dot").className="dot"+(connected?" on":"");

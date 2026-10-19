@@ -728,6 +728,11 @@ fn public_path(path: &str) -> bool {
 }
 
 fn session_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            return Some(token.trim().to_string());
+        }
+    }
     let raw = headers.get(header::COOKIE)?.to_str().ok()?;
     raw.split(';')
         .find_map(|part| part.trim().strip_prefix("thermolink_session=").map(str::to_string))
@@ -914,7 +919,8 @@ fn session_response(token: String, secure: bool) -> Response {
         // A proxied TLS deployment should keep browsers on HTTPS.
         builder = builder.header("strict-transport-security", "max-age=31536000");
     }
-    builder.body(Body::from(r#"{"ok":true}"#)).unwrap()
+    let body = serde_json::to_vec(&json!({ "ok": true, "token": token })).unwrap_or_default();
+    builder.body(Body::from(body)).unwrap()
 }
 
 async fn setup(
