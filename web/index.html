@@ -106,6 +106,7 @@
   .snaps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .snaps a{font:11px ui-monospace,Menlo,monospace;color:var(--cold);text-decoration:none;border:1px solid #24303d;border-radius:5px;padding:2px 5px}
   .snaps a:hover{border-color:var(--accent)}
+  body.guest .admin-only{display:none!important}
   .authmodal{position:fixed;inset:0;background:#0a0c0ff2;backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:100}
   .authmodal.show{display:flex}
   .authcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;width:340px;display:flex;flex-direction:column;gap:10px}
@@ -136,6 +137,7 @@
   <button id="unit">°C</button>
   <button id="fullBtn">Full</button>
   <button id="snapTop" class="primary">Snapshot</button>
+  <button id="accountBtn" style="display:none">Account</button>
   <button id="logout" style="display:none">Log out</button>
 </header>
 
@@ -244,6 +246,7 @@
       <div class="hint" id="alarmState"></div>
       <h2>Recent events</h2>
       <ul class="list" id="events"><li><span class="grow">No events</span></li></ul>
+      <div class="admin-only">
       <h2>Notifications</h2>
       <div class="hint" id="notifyState">none configured</div>
       <label class="f">Discord <input id="notifyDiscord" placeholder="webhook URL" style="width:100%"></label>
@@ -253,6 +256,7 @@
       <label class="f">Webhook <input id="notifyHook" placeholder="https://…" style="width:100%"></label>
       <div class="row" style="margin-top:8px"><button id="notifySave">Save</button><button id="notifyClear">Clear all</button></div>
       <div class="hint">Blank fields are unchanged. Stored server-side; values are never returned.</div>
+      </div>
       <h2>Last event</h2>
       <div class="kv" id="lastAlarm"><span>—</span><span>none</span></div>
     </div>
@@ -299,7 +303,7 @@
       <h2>Camera settings</h2>
       <div class="row"><button id="camRead">Read from camera</button></div>
       <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span>not read</span></div>
-      <div class="row" style="margin-top:8px"><button id="camReboot">Reboot camera</button></div>
+      <div class="row" style="margin-top:8px"><button id="camReboot" class="admin-only">Reboot camera</button></div>
       <h2>Calibration</h2>
       <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
       <label class="f">Offset <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
@@ -314,6 +318,32 @@
       </div>
     </div>
   </aside>
+</div>
+
+<div class="authmodal" id="account">
+  <div class="authcard" style="width:420px;max-height:86vh;overflow:auto">
+    <h1>Account</h1>
+    <div class="hint" id="acctWho"></div>
+    <h2>Username</h2>
+    <label class="f">New username <input id="acctUser" autocomplete="username" style="flex:1"></label>
+    <div class="row"><button id="acctUserSave">Save username</button></div>
+    <h2>Password</h2>
+    <label class="f">Current <input id="acctCurrent" type="password" autocomplete="current-password" style="flex:1"></label>
+    <label class="f">New <input id="acctNew" type="password" autocomplete="new-password" style="flex:1"></label>
+    <label class="f">Confirm <input id="acctConfirm" type="password" autocomplete="new-password" style="flex:1"></label>
+    <div class="row"><button id="acctPassSave">Change password</button></div>
+    <h2>Guest account</h2>
+    <div class="hint">A guest can watch and measure, and use only the capabilities granted below. The camera, update, account and notification settings stay admin-only.</div>
+    <label class="f"><input id="acctGuestOn" type="checkbox" style="width:auto"> Enabled</label>
+    <label class="f">Password <input id="acctGuestPass" type="password" autocomplete="new-password" placeholder="set or replace" style="flex:1"></label>
+    <div class="row"><button id="acctGuestSave">Save guest</button></div>
+    <h2>Guest permissions</h2>
+    <div id="acctPerms"></div>
+    <div class="row" style="margin-top:8px"><button id="acctPermsSave">Save permissions</button></div>
+    <div class="err" id="acctErr"></div>
+    <div class="ok" id="acctMsg"></div>
+    <div class="row" style="margin-top:6px"><button id="acctClose">Close</button></div>
+  </div>
 </div>
 
 <div class="authmodal" id="auth">
@@ -350,12 +380,47 @@ function fmt(c) {
 
 // ---------- auth (optional: open until a password is set) ----------
 let authMode = "login";
+let AUTH = { role: "admin", perms: {}, user: null, guest: false };
+function can(cap) { return AUTH.role === "admin" || !!AUTH.perms[cap]; }
+function applyGuestUi() {
+  const guest = AUTH.role === "guest";
+  document.body.classList.toggle("guest", guest);
+  $("accountBtn").style.display = guest ? "none" : (AUTH.user ? "" : "none");
+  if (!guest) return;
+  const hide = (id) => { const el = $(id); if (el) el.style.display = "none"; };
+  const hideTab = (name) => {
+    const b = document.querySelector(`#tabs button[data-tab="${name}"]`);
+    if (b) b.style.display = "none";
+  };
+  if (!can("display")) hideTab("display");
+  if (!can("measure")) hideTab("measure");
+  if (!can("alarms")) hideTab("alarms");
+  if (!can("snapshot")) { hide("snap"); hide("snapTop"); hide("snapState"); hide("snaps"); }
+  if (!can("prerecord")) {
+    hide("prEnabled"); hide("prBefore"); hide("prAfter"); hide("prSave");
+    hide("prState"); hide("captures");
+  }
+  if (!can("reference")) {
+    for (const id of ["refName","refSave","refClearAll","refList","setRef","clearRef",
+                      "dtSpan","cmpA","cmpB","cmpLink","dtToggle","dtStats"]) hide(id);
+  }
+  if (!can("calibration")) {
+    for (const id of ["calScale","calOffset","calApply","calFactory","calState"]) hide(id);
+  }
+  const active = document.querySelector("#tabs button.active");
+  if (!active || active.style.display === "none") {
+    const first = [...document.querySelectorAll("#tabs button")].find(b => b.style.display !== "none");
+    if (first) setTab(first.dataset.tab);
+  }
+}
 async function initAuth() {
   try {
     const d = await (await fetch("/api/whoami")).json();
     if (d.authenticated) {
+      AUTH = { role: d.role || "admin", perms: d.perms || {}, user: d.user, guest: !!d.guest };
       $("auth").classList.remove("show");
       $("logout").style.display = d.configured ? "" : "none";
+      applyGuestUi();
       return;
     }
     if (d.setup_required) {
@@ -390,6 +455,56 @@ $("authForm").onsubmit = async (e) => {
   else $("authErr").textContent = await r.text();
 };
 $("logout").onclick = async () => { await fetch("/api/logout", { method:"POST" }); location.reload(); };
+
+// ---------- account (admin only) ----------
+function acctMsg(text, isErr = false) {
+  $("acctMsg").textContent = isErr ? "" : text;
+  $("acctErr").textContent = isErr ? text : "";
+}
+async function acctPost(body) {
+  const r = await fetch("/api/account", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  const text = await r.text();
+  if (!r.ok) { acctMsg(text, true); return null; }
+  try { return JSON.parse(text); } catch(e) { return {}; }
+}
+async function openAccount() {
+  acctMsg("");
+  const r = await fetch("/api/account");
+  if (!r.ok) { acctMsg(await r.text(), true); $("account").classList.add("show"); return; }
+  const d = await r.json();
+  $("acctWho").textContent = "Signed in as " + d.username + " (" + d.role + ")";
+  $("acctUser").value = d.username;
+  $("acctGuestOn").checked = !!d.guest_enabled;
+  $("acctPerms").innerHTML = (d.caps || []).map(c =>
+    `<label class="f"><input type="checkbox" data-cap="${c}" style="width:auto" ${d.guest_perms[c] ? "checked" : ""}> ${c}</label>`).join("");
+  $("account").classList.add("show");
+}
+$("accountBtn").onclick = openAccount;
+$("acctClose").onclick = () => $("account").classList.remove("show");
+$("acctUserSave").onclick = async () => {
+  const d = await acctPost({ action: "username", username: $("acctUser").value });
+  if (d) { acctMsg("Username saved."); $("acctWho").textContent = "Signed in as " + d.username; }
+};
+$("acctPassSave").onclick = async () => {
+  if ($("acctNew").value !== $("acctConfirm").value) { acctMsg("Passwords do not match.", true); return; }
+  const d = await acctPost({ action: "password", current: $("acctCurrent").value, new: $("acctNew").value });
+  if (d) {
+    acctMsg("Password changed; other sessions were signed out.");
+    for (const id of ["acctCurrent", "acctNew", "acctConfirm"]) $(id).value = "";
+  }
+};
+$("acctGuestSave").onclick = async () => {
+  const d = await acctPost({ action: "guest", enabled: $("acctGuestOn").checked, password: $("acctGuestPass").value });
+  if (d) { acctMsg("Guest account saved."); $("acctGuestPass").value = ""; }
+};
+$("acctPermsSave").onclick = async () => {
+  const perms = {};
+  for (const c of document.querySelectorAll("#acctPerms input[data-cap]")) perms[c.dataset.cap] = c.checked;
+  const d = await acctPost({ action: "perms", perms });
+  if (d) acctMsg("Guest permissions saved.");
+};
 
 // ---------- modes / tabs / wipe ----------
 function fitViewer() {

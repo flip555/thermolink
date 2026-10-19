@@ -12,8 +12,8 @@ use rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Path as AxumPath, Query, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::extract::{ConnectInfo, Extension, Path as AxumPath, Query, Request, State};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -114,10 +114,88 @@ pub struct Reference {
     pub calibration: Option<Calibration>,
 }
 
+/// A restricted second account. It may only read and, when explicitly
+/// granted, use a small set of write capabilities; the camera, updater,
+/// account and notification credentials always stay with the admin.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct GuestAccount {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub hash: String,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AuthFile {
     pub username: String,
     pub hash: String,
+    /// Omitted by auth.json written before guest support; defaults closed.
+    #[serde(default)]
+    pub guest: GuestAccount,
+    /// Omitted by older files; missing entries fall back to the defaults.
+    #[serde(default)]
+    pub guest_perms: BTreeMap<String, bool>,
+}
+
+/// Capabilities a guest may be granted. Anything outside this list is
+/// admin-only, no matter what a stored file says.
+pub const GUEST_CAPS: [&str; 7] =
+    ["measure", "snapshot", "display", "reference", "calibration", "alarms", "prerecord"];
+
+fn default_guest_perms() -> BTreeMap<String, bool> {
+    BTreeMap::from([
+        ("measure".to_string(), true),
+        ("snapshot".to_string(), true),
+        ("display".to_string(), true),
+        ("reference".to_string(), true),
+        ("calibration".to_string(), false),
+        ("alarms".to_string(), false),
+        ("prerecord".to_string(), false),
+    ])
+}
+
+impl AuthFile {
+    /// Defaults merged with the stored values, restricted to known caps.
+    fn perms(&self) -> BTreeMap<String, bool> {
+        let mut out = default_guest_perms();
+        for (key, value) in &self.guest_perms {
+            if GUEST_CAPS.contains(&key.as_str()) {
+                out.insert(key.clone(), *value);
+            }
+        }
+        out
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Admin,
+    Guest,
+}
+
+impl Role {
+    fn as_str(self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Guest => "guest",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Session {
+    expires: Instant,
+    role: Role,
+    user: String,
+}
+
+/// What the auth middleware learned about the caller. Handlers that need a
+/// role decision read it from the request extensions.
+#[derive(Clone)]
+struct AuthContext {
+    role: Role,
+    user: String,
 }
 
 #[derive(Clone, Serialize, PartialEq)]
@@ -168,7 +246,7 @@ pub struct AppState {
     pub align: RwLock<Align>,
     pub notify: RwLock<NotifyConfig>,
     pub auth: RwLock<Option<AuthFile>>,
-    sessions: RwLock<HashMap<String, Instant>>,
+    sessions: RwLock<HashMap<String, Session>>,
     setup_token: String,
     pub calibration: RwLock<Calibration>,
     pub connected: Arc<AtomicBool>,
@@ -558,6 +636,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/setup", post(setup))
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
+        .route("/api/account", get(get_account).post(update_account))
         .route("/api/regions.csv", get(regions_csv))
         .route("/api/history.csv", get(history_csv))
         .route("/api/history.json", get(history_json))
@@ -608,51 +687,125 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
         .find_map(|part| part.trim().strip_prefix("thermolink_session=").map(str::to_string))
 }
 
+/// What a request needs before it reaches a handler. Reads are open to any
+/// signed-in account; `Admin` covers the camera, updater, account and
+/// notification credentials, which are never delegated.
+#[derive(Debug, PartialEq, Eq)]
+enum Guard {
+    Read,
+    Cap(&'static str),
+    Admin,
+}
+
+fn guard_for(method: &Method, path: &str, query: Option<&str>) -> Guard {
+    if path == "/api/notify" || path == "/api/account" {
+        return Guard::Admin;
+    }
+    let clear = query.is_some_and(|q| q.split('&').any(|p| p == "clear=1"));
+    let write = !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS);
+    if !write && !(clear && matches!(path, "/api/history.json" | "/api/regions.csv")) {
+        return Guard::Read;
+    }
+    if path.starts_with("/api/regions") {
+        Guard::Cap("measure")
+    } else if path.starts_with("/api/alarms") {
+        Guard::Cap("alarms")
+    } else if path.starts_with("/api/reference") {
+        Guard::Cap("reference")
+    } else if path == "/api/snapshot" || path.starts_with("/api/snapshots/") {
+        Guard::Cap("snapshot")
+    } else if path == "/api/display" || path == "/api/isotherm" {
+        Guard::Cap("display")
+    } else if path == "/api/calibration" {
+        Guard::Cap("calibration")
+    } else if path == "/api/prerecord" {
+        Guard::Cap("prerecord")
+    } else if path == "/api/history.json" || path == "/api/regions.csv" {
+        Guard::Cap("measure")
+    } else {
+        Guard::Admin
+    }
+}
+
+fn verify_hash(password: &str, stored: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(stored) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
+}
+
+fn hash_password(password: &str) -> Result<String, (StatusCode, String)> {
+    let salt = SaltString::generate(&mut OsRng);
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .to_string())
+}
+
 async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
     if public_path(req.uri().path()) {
         return next.run(req).await;
     }
     // Closed by default: with no account only the setup/login surface is
     // reachable. This prevents an unauthenticated visitor from claiming admin.
-    if st.auth.read().await.is_none() {
+    let Some(auth) = st.auth.read().await.clone() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "setup required").into_response();
-    }
-    if let Some(token) = session_token(req.headers()) {
-        let valid = st
-            .sessions
-            .read()
-            .await
-            .get(&token)
-            .is_some_and(|expires| *expires > Instant::now());
-        if valid {
-            return next.run(req).await;
+    };
+    let Some(token) = session_token(req.headers()) else {
+        return (StatusCode::UNAUTHORIZED, "login required").into_response();
+    };
+    let session = st
+        .sessions
+        .read()
+        .await
+        .get(&token)
+        .filter(|s| s.expires > Instant::now())
+        .cloned();
+    let Some(session) = session else {
+        return (StatusCode::UNAUTHORIZED, "login required").into_response();
+    };
+    match guard_for(req.method(), req.uri().path(), req.uri().query()) {
+        Guard::Admin if session.role != Role::Admin => {
+            return (StatusCode::FORBIDDEN, "admin only").into_response();
         }
+        Guard::Cap(cap) if session.role != Role::Admin => {
+            if !auth.guest.enabled || !auth.perms().get(cap).copied().unwrap_or(false) {
+                return (StatusCode::FORBIDDEN, "not permitted for this account").into_response();
+            }
+        }
+        _ => {}
     }
-    (StatusCode::UNAUTHORIZED, "login required").into_response()
+    let mut req = req;
+    req.extensions_mut().insert(AuthContext {
+        role: session.role,
+        user: session.user,
+    });
+    next.run(req).await
 }
 
 async fn whoami(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<serde_json::Value> {
     let auth = st.auth.read().await.clone();
     let setup_required = auth.is_none();
-    let configured = auth.is_some();
-    let authenticated = if setup_required {
-        false
-    } else {
-        match session_token(&headers) {
-            Some(token) => st
-                .sessions
-                .read()
-                .await
-                .get(&token)
-                .is_some_and(|expires| *expires > Instant::now()),
-            None => false,
-        }
+    let session = match session_token(&headers) {
+        Some(token) => st
+            .sessions
+            .read()
+            .await
+            .get(&token)
+            .filter(|s| s.expires > Instant::now())
+            .cloned(),
+        None => None,
     };
     Json(json!({
-        "authenticated": authenticated,
-        "configured": configured,
+        "authenticated": session.is_some(),
+        "configured": auth.is_some(),
         "setup_required": setup_required,
-        "user": auth.map(|a| a.username),
+        "user": session.as_ref().map(|s| s.user.clone()),
+        "role": session.as_ref().map(|s| s.role.as_str()),
+        "guest": auth.as_ref().is_some_and(|a| a.guest.enabled),
+        "perms": auth.as_ref().map(AuthFile::perms).unwrap_or_default(),
     }))
 }
 
@@ -662,7 +815,7 @@ struct Credentials {
     password: String,
 }
 
-async fn new_session(st: &Arc<AppState>) -> String {
+async fn new_session(st: &Arc<AppState>, role: Role, user: &str) -> String {
     let mut bytes = [0u8; 32];
     let mut rng = OsRng;
     rng.fill_bytes(&mut bytes);
@@ -670,8 +823,15 @@ async fn new_session(st: &Arc<AppState>) -> String {
     {
         let mut sessions = st.sessions.write().await;
         let now = Instant::now();
-        sessions.retain(|_, expires| *expires > now);
-        sessions.insert(token.clone(), now + Duration::from_secs(7 * 24 * 3600));
+        sessions.retain(|_, s| s.expires > now);
+        sessions.insert(
+            token.clone(),
+            Session {
+                expires: now + Duration::from_secs(7 * 24 * 3600),
+                role,
+                user: user.to_string(),
+            },
+        );
     }
     token
 }
@@ -733,14 +893,12 @@ async fn setup(
     if c.password.len() < 6 {
         return Err((StatusCode::BAD_REQUEST, "password must be at least 6 characters".into()));
     }
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = Argon2::default()
-        .hash_password(c.password.as_bytes(), &salt)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .to_string();
+    let hash = hash_password(&c.password)?;
     *st.auth.write().await = Some(AuthFile {
         username: username.clone(),
         hash,
+        guest: GuestAccount::default(),
+        guest_perms: BTreeMap::new(),
     });
     if let Err(e) = st.persist_auth().await {
         *st.auth.write().await = None;
@@ -748,7 +906,7 @@ async fn setup(
     }
     tracing::info!(user = %username, "admin account created");
     let secure = is_secure_request(&headers);
-    Ok(session_response(new_session(&st).await, secure))
+    Ok(session_response(new_session(&st, Role::Admin, &username).await, secure))
 }
 
 async fn login(
@@ -759,19 +917,20 @@ async fn login(
     let Some(auth) = st.auth.read().await.clone() else {
         return Err((StatusCode::CONFLICT, "setup required".into()));
     };
-    if auth.username != c.username.trim() {
-        return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
-    }
-    let parsed = PasswordHash::new(&auth.hash)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if Argon2::default()
-        .verify_password(c.password.as_bytes(), &parsed)
-        .is_err()
+    let who = c.username.trim();
+    let (role, user) = if who == auth.username && verify_hash(&c.password, &auth.hash) {
+        (Role::Admin, auth.username.clone())
+    } else if who == "guest"
+        && auth.guest.enabled
+        && !auth.guest.hash.is_empty()
+        && verify_hash(&c.password, &auth.guest.hash)
     {
+        (Role::Guest, "guest".to_string())
+    } else {
         return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
-    }
+    };
     let secure = is_secure_request(&headers);
-    Ok(session_response(new_session(&st).await, secure))
+    Ok(session_response(new_session(&st, role, &user).await, secure))
 }
 
 async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -789,6 +948,152 @@ async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"ok":true}"#))
         .unwrap()
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum AccountAction {
+    Username { username: String },
+    Password { current: String, new: String },
+    Guest {
+        enabled: bool,
+        #[serde(default)]
+        password: String,
+    },
+    Perms {
+        perms: BTreeMap<String, bool>,
+    },
+}
+
+async fn admin_account(
+    st: &Arc<AppState>,
+    ctx: &AuthContext,
+) -> Result<AuthFile, (StatusCode, String)> {
+    if ctx.role != Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+    st.auth
+        .read()
+        .await
+        .clone()
+        .ok_or((StatusCode::CONFLICT, "setup required".into()))
+}
+
+async fn get_account(
+    State(st): State<Arc<AppState>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let auth = admin_account(&st, &ctx).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "username": auth.username,
+        "user": ctx.user,
+        "role": ctx.role.as_str(),
+        "guest_enabled": auth.guest.enabled,
+        "guest_perms": auth.perms(),
+        "caps": GUEST_CAPS,
+    })))
+}
+
+async fn update_account(
+    State(st): State<Arc<AppState>>,
+    Extension(ctx): Extension<AuthContext>,
+    headers: HeaderMap,
+    Json(action): Json<AccountAction>,
+) -> Result<Response, (StatusCode, String)> {
+    let before = admin_account(&st, &ctx).await?;
+    let mut auth = before.clone();
+    let mut revoke_all = false;
+    let mut revoke_guests = false;
+
+    match action {
+        AccountAction::Username { username } => {
+            let username = username.trim().to_string();
+            if username.len() < 2 || username.len() > 40 {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "username must be 2-40 characters".into(),
+                ));
+            }
+            auth.username = username;
+        }
+        AccountAction::Password { current, new } => {
+            if !verify_hash(&current, &auth.hash) {
+                return Err((StatusCode::UNAUTHORIZED, "current password is not right".into()));
+            }
+            if new.len() < 8 {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "password must be at least 8 characters".into(),
+                ));
+            }
+            auth.hash = hash_password(&new)?;
+            revoke_all = true;
+        }
+        AccountAction::Guest { enabled, password } => {
+            if enabled {
+                if !password.is_empty() {
+                    if password.len() < 8 {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "guest password must be at least 8 characters".into(),
+                        ));
+                    }
+                    auth.guest.hash = hash_password(&password)?;
+                } else if auth.guest.hash.is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "set a guest password to enable the account".into(),
+                    ));
+                }
+            } else {
+                // Removing the account also forgets the password, matching
+                // the Python relay: re-enabling requires a fresh one.
+                auth.guest.hash.clear();
+                revoke_guests = true;
+            }
+            auth.guest.enabled = enabled;
+        }
+        AccountAction::Perms { perms } => {
+            let mut merged = auth.perms();
+            for (key, value) in perms {
+                if GUEST_CAPS.contains(&key.as_str()) {
+                    merged.insert(key, value);
+                }
+            }
+            auth.guest_perms = merged;
+        }
+    }
+
+    *st.auth.write().await = Some(auth.clone());
+    if let Err(e) = st.persist_auth().await {
+        *st.auth.write().await = Some(before);
+        return Err(persist_error(e));
+    }
+    if revoke_all {
+        st.sessions.write().await.clear();
+        let secure = is_secure_request(&headers);
+        return Ok(session_response(
+            new_session(&st, Role::Admin, &auth.username).await,
+            secure,
+        ));
+    }
+    if revoke_guests {
+        st.sessions
+            .write()
+            .await
+            .retain(|_, s| s.role == Role::Admin);
+    }
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "username": auth.username,
+            "guest_enabled": auth.guest.enabled,
+            "guest_perms": auth.perms(),
+        })),
+    )
+        .into_response())
 }
 
 async fn index() -> Html<&'static str> {
@@ -2735,6 +3040,75 @@ mod tests {
         let back: IsothermState = serde_json::from_str(&text).expect("decode");
         assert_eq!(back.current, "mine");
         assert_eq!(back.profiles["mine"][0].hi, 20.0);
+    }
+
+    #[test]
+    fn guest_guard_maps_writes_to_capabilities() {
+        assert_eq!(
+            guard_for(&Method::GET, "/api/thermal.json", None),
+            Guard::Read
+        );
+        assert_eq!(
+            guard_for(&Method::POST, "/api/regions", None),
+            Guard::Cap("measure")
+        );
+        assert_eq!(
+            guard_for(&Method::DELETE, "/api/snapshots/x.raw", None),
+            Guard::Cap("snapshot")
+        );
+        assert_eq!(
+            guard_for(&Method::POST, "/api/references", None),
+            Guard::Cap("reference")
+        );
+        assert_eq!(
+            guard_for(&Method::POST, "/api/display", None),
+            Guard::Cap("display")
+        );
+        assert_eq!(
+            guard_for(&Method::GET, "/api/history.json", Some("clear=1")),
+            Guard::Cap("measure")
+        );
+        // Notification credentials and account management stay admin-only.
+        assert_eq!(guard_for(&Method::GET, "/api/notify", None), Guard::Admin);
+        assert_eq!(
+            guard_for(&Method::POST, "/api/camera/reboot", None),
+            Guard::Admin
+        );
+        assert_eq!(
+            guard_for(&Method::POST, "/api/account", None),
+            Guard::Admin
+        );
+    }
+
+    #[test]
+    fn old_auth_files_default_to_a_closed_guest() {
+        let old = r#"{"username":"admin","hash":"x"}"#;
+        let auth: AuthFile = serde_json::from_str(old).expect("legacy auth.json");
+        assert!(!auth.guest.enabled);
+        let perms = auth.perms();
+        assert_eq!(perms["measure"], true);
+        assert_eq!(perms["snapshot"], true);
+        assert_eq!(perms["calibration"], false);
+        assert!(!perms.contains_key("camera"));
+    }
+
+    #[test]
+    fn stored_guest_permissions_are_restricted_to_known_caps() {
+        let text = r#"{"username":"admin","hash":"x","guest":{"enabled":true,"hash":"y"},
+            "guest_perms":{"measure":false,"alarms":true,"camera":true}}"#;
+        let auth: AuthFile = serde_json::from_str(text).expect("auth.json");
+        let perms = auth.perms();
+        assert_eq!(perms["measure"], false);
+        assert_eq!(perms["alarms"], true);
+        assert!(!perms.contains_key("camera"), "unknown caps are never granted");
+    }
+
+    #[test]
+    fn password_hash_round_trips() {
+        let hash = hash_password("correct horse battery").expect("hash");
+        assert!(verify_hash("correct horse battery", &hash));
+        assert!(!verify_hash("wrong password", &hash));
+        assert!(!verify_hash("anything", "not-a-hash"));
     }
 
     #[test]
