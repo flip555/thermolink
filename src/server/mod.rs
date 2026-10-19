@@ -258,6 +258,10 @@ pub struct AppState {
     pub driver: Arc<dyn CameraDriver>,
     pub camera_host: String,
     pub data_dir: PathBuf,
+    /// Path of the running executable, captured before an update can
+    /// replace it: `/proc/self/exe` gains a `(deleted)` suffix after the
+    /// rename and would no longer be executable.
+    pub exe: PathBuf,
     pub history: Arc<History>,
     pub regions: RwLock<Vec<Region>>,
     pub alarms: RwLock<Vec<Alarm>>,
@@ -373,6 +377,7 @@ impl AppState {
             driver,
             camera_host,
             data_dir,
+            exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thermolink")),
             history: Arc::new(History::new()),
             regions: RwLock::new(regions),
             alarms: RwLock::new(alarms),
@@ -632,6 +637,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/align", get(get_align).post(set_align))
         .route("/api/notify", get(get_notify).post(set_notify))
         .route("/api/version", get(version))
+        .route("/api/update", get(update_check).post(update_apply))
+        .route("/api/restart", post(restart_relay))
         .route("/api/whoami", get(whoami))
         .route("/api/setup", post(setup))
         .route("/api/login", post(login))
@@ -701,7 +708,11 @@ enum Guard {
 }
 
 fn guard_for(method: &Method, path: &str, query: Option<&str>) -> Guard {
-    if path == "/api/notify" || path == "/api/account" {
+    if path == "/api/notify"
+        || path == "/api/account"
+        || path == "/api/update"
+        || path == "/api/restart"
+    {
         return Guard::Admin;
     }
     let clear = query.is_some_and(|q| q.split('&').any(|p| p == "clear=1"));
@@ -2794,7 +2805,95 @@ async fn send_notifications(st: &Arc<AppState>, text: &str) {
 }
 
 async fn version() -> Json<serde_json::Value> {
-    Json(json!({ "name": "thermolink", "version": env!("CARGO_PKG_VERSION") }))
+    Json(json!({
+        "ok": true,
+        "name": "thermolink",
+        "version": env!("CARGO_PKG_VERSION"),
+        "repo": crate::update::repo(),
+    }))
+}
+
+fn upstream_error(e: anyhow::Error) -> (StatusCode, String) {
+    (StatusCode::BAD_GATEWAY, e.to_string())
+}
+
+/// `GET /api/update` — compare the running build with the latest release.
+/// A private repository with no published release is an honest 502, not a
+/// fabricated "up to date".
+async fn update_check() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let repo = crate::update::repo();
+    let release = crate::update::latest(&repo).await.map_err(upstream_error)?;
+    let current = env!("CARGO_PKG_VERSION");
+    let asset =
+        crate::update::pick_asset(&release.assets, std::env::consts::OS, std::env::consts::ARCH);
+    Ok(Json(json!({
+        "ok": true,
+        "current": current,
+        "latest": release.tag,
+        "name": release.name,
+        "url": release.url,
+        "notes": release.notes,
+        "available": crate::update::is_newer(&release.tag, current),
+        "asset": asset.map(|a| json!({ "name": a.name, "size": a.size })),
+        "repo": repo,
+    })))
+}
+
+/// `POST /api/update` — install the latest release asset over this binary.
+/// The running image is untouched until `POST /api/restart` execs again.
+async fn update_apply(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let repo = crate::update::repo();
+    let release = crate::update::latest(&repo).await.map_err(upstream_error)?;
+    if release.tag.is_empty() {
+        return Err((StatusCode::BAD_GATEWAY, "release has no tag".into()));
+    }
+    let asset =
+        crate::update::pick_asset(&release.assets, std::env::consts::OS, std::env::consts::ARCH)
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!(
+                        "release {} has no binary asset for {} {}",
+                        release.tag,
+                        std::env::consts::OS,
+                        std::env::consts::ARCH
+                    ),
+                )
+            })?;
+    let bytes = crate::update::download(&asset.url)
+        .await
+        .map_err(upstream_error)?;
+    let exe = st.exe.clone();
+    let installed = tokio::task::spawn_blocking(move || crate::update::install(&bytes, &exe))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({
+        "ok": true,
+        "from": env!("CARGO_PKG_VERSION"),
+        "to": release.tag,
+        "restart_required": true,
+        "detail": {
+            "path": installed.path,
+            "backup": installed.backup,
+            "bytes": installed.bytes,
+        }
+    })))
+}
+
+/// `POST /api/restart` — respond first, then exec this binary in place.
+/// In-memory sessions are replaced, so the caller signs in again.
+async fn restart_relay(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let exe = st.exe.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        if let Err(e) = crate::update::restart(&exe) {
+            tracing::error!(error = %e, "relay restart failed");
+        }
+    });
+    Json(json!({ "ok": true, "restarting": true, "login_required": true }))
 }
 
 async fn set_region_ref(
@@ -3130,8 +3229,12 @@ mod tests {
             guard_for(&Method::GET, "/api/history.json", Some("clear=1")),
             Guard::Cap("measure")
         );
-        // Notification credentials and account management stay admin-only.
+        // Notification credentials, the updater and account management stay
+        // admin-only even for reads.
         assert_eq!(guard_for(&Method::GET, "/api/notify", None), Guard::Admin);
+        assert_eq!(guard_for(&Method::GET, "/api/update", None), Guard::Admin);
+        assert_eq!(guard_for(&Method::POST, "/api/update", None), Guard::Admin);
+        assert_eq!(guard_for(&Method::POST, "/api/restart", None), Guard::Admin);
         assert_eq!(
             guard_for(&Method::POST, "/api/camera/reboot", None),
             Guard::Admin

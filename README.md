@@ -99,6 +99,9 @@ the three hottest spots, palette switching, and independent clip and span bands
 | `/api/display` | GET/POST palette + clip/span |
 | `/api/raw.h264` | raw visible stream passthrough |
 | `/api/health` | liveness + frame sequence |
+| `/api/version` | running build and update repository |
+| `/api/update` | GET: latest release; POST: install its binary (admin) |
+| `/api/restart` | exec the relay in place (admin) |
 
 `probe` is the honest test: if no thermal frame arrives it exits non-zero. A
 polite handshake alone does not mean the camera accepted the session.
@@ -117,6 +120,16 @@ polite handshake alone does not mean the camera accepted the session.
 
 Full details, including the settings ritual and the notes about port 23, are in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
+### Updating a deployment
+
+`GET /api/update` asks GitHub for the latest release of `flip555/thermolink`
+(override with `THERMOLINK_REPO`). `POST /api/update` downloads the asset whose
+name matches this OS and architecture, checks it is a real executable, copies
+the current binary to `thermolink.bak-<timestamp>` and renames the new one into
+place. The running process keeps the old image until `POST /api/restart`, which
+execs the new binary with the same arguments and PID; in-memory sessions are
+lost, so everyone signs in again. Both endpoints are admin-only.
 
 ## Roadmap
 

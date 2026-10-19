@@ -297,6 +297,21 @@
         <span>Video</span><span id="vlink">–</span>
         <span>Version</span><span id="ver">–</span>
       </div>
+      <h2 class="admin-only">Relay</h2>
+      <div class="admin-only">
+        <div class="kv">
+          <span>Build</span><span id="verBuild">–</span>
+          <span>Repository</span><span id="verRepo">–</span>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button id="updCheck">Check for updates</button>
+          <button id="updInstall" disabled>Install update</button>
+          <button id="updRestart">Restart relay</button>
+        </div>
+        <div class="hint" id="updState">Not checked.</div>
+        <div class="hint" id="updNotes" style="white-space:pre-wrap"></div>
+        <div class="hint">Installing replaces the binary on disk; the running build keeps serving until you restart. A restart signs everyone in again.</div>
+      </div>
       <h2>Discovery</h2>
       <div class="row"><button id="discover">Discover cameras</button></div>
       <div class="kv" id="discovered" style="margin-top:8px"><span>—</span><span>not scanned</span></div>
@@ -1195,7 +1210,81 @@ applyWipe();
 fitViewer();
 if (state.dt) refreshDt();
 
-fetch("/api/version").then(r=>r.json()).then(d=>{ $("ver").textContent = d.version || "–"; }).catch(()=>{});
+// ---------- relay version, self-update and restart (admin only) ----------
+let UPDATE = null;
+async function loadVersion() {
+  try {
+    const d = await (await fetch("/api/version", {cache:"no-store"})).json();
+    $("ver").textContent = d.version || "–";
+    $("verBuild").textContent = d.version || "–";
+    $("verRepo").textContent = d.repo || "–";
+  } catch (e) {}
+}
+$("updCheck").onclick = async () => {
+  $("updState").textContent = "Checking…";
+  $("updNotes").textContent = "";
+  $("updInstall").disabled = true;
+  try {
+    const r = await fetch("/api/update", {cache:"no-store"});
+    const text = await r.text();
+    let d = {};
+    try { d = JSON.parse(text); } catch (e) {}
+    if (!r.ok) {
+      $("updState").textContent = "Check failed: " + (d.error || text || r.status);
+      return;
+    }
+    UPDATE = d;
+    $("updInstall").disabled = !d.available;
+    $("updState").textContent = d.available
+      ? `Update available: ${d.latest} (running ${d.current}).`
+      : `Up to date (${d.current}).`;
+    $("updNotes").textContent = d.notes || "";
+  } catch (e) {
+    $("updState").textContent = "Check failed: " + e;
+  }
+};
+$("updInstall").onclick = async () => {
+  if (!confirm("Install " + ((UPDATE && UPDATE.latest) || "the latest release") +
+               " now? The running build keeps serving until you restart.")) return;
+  $("updState").textContent = "Downloading and installing…";
+  try {
+    const r = await fetch("/api/update", {method:"POST"});
+    const text = await r.text();
+    let d = {};
+    try { d = JSON.parse(text); } catch (e) {}
+    if (!r.ok) {
+      $("updState").textContent = "Install failed: " + (d.error || text || r.status);
+      return;
+    }
+    $("updState").textContent = `Installed ${d.to}. Restart the relay to run it.`;
+    $("updRestart").classList.add("primary");
+  } catch (e) {
+    $("updState").textContent = "Install failed: " + e;
+  }
+};
+function waitForRestart() {
+  let tries = 0;
+  const tick = async () => {
+    tries += 1;
+    try {
+      const r = await fetch("/api/health", {cache:"no-store"});
+      if (r.ok) { location.reload(); return; }
+    } catch (e) {}
+    if (tries >= 40) {
+      $("updState").textContent = "The relay did not come back after 40 seconds. Check the service log.";
+      return;
+    }
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1500);
+}
+$("updRestart").onclick = async () => {
+  if (!confirm("Restart the relay now? Everyone will need to sign in again.")) return;
+  $("updState").textContent = "Restarting…";
+  try { await fetch("/api/restart", {method:"POST"}); } catch (e) {}
+  waitForRestart();
+};
+loadVersion();
 
 poll(); setInterval(poll, 1000);
 loadHistory(); setInterval(loadHistory, 2000);
