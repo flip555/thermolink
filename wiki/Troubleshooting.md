@@ -30,6 +30,11 @@ Switch to `mock` to prove the UI path.
 Expected: the P3 driver is untested and its USB transfer layer is not wired.
 Switch back to `qianli` or `mock`.
 
+## Re-analysis visible frame missing / NaN peaks
+
+Only snapshots taken after visible-frame capture have a `.vis` still; take a new
+one. NaN peaks were a `celsius` vs `c` mapping bug, fixed in the current build.
+
 ## Disk full
 
 `cargo clean --profile dev` frees the debug tree; prune `snapshots/` and

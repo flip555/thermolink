@@ -23,8 +23,12 @@ but **untested against hardware** and not yet wired to libusb/nusb.
 - **Drivers:** Qianli SuperCam over TCP, simulated source, and an offline
   P3/P1 USB driver entry (untested). Drivers advertise capabilities; the GUI
   hides controls a camera cannot use, and drivers can be switched at runtime.
-- **Operations:** snapshots (JPEG/raw/JSON), pre-record ring buffer, per-clip
-  ZIPs, alarm events, CSV exports, self-update/restart, health/uptime.
+- **Operations:** snapshots (JPEG/raw/JSON + saved visible frame), pre-record
+  ring buffer, per-clip ZIPs, alarm events, CSV exports, self-update/restart,
+  health/uptime.
+- **Re-analysis:** snapshots open as a stored view in the main window — thermal
+  re-rendered with current palette/bands, saved visible frame, stored peaks and
+  regions, with Wipe/PiP/Fusion/alignment still active; Exit returns to live.
 - **Access:** Argon2 account, admin/guest roles with per-capability permissions,
   persisted sessions, Bearer and query tokens, self-signed HTTPS on `:8443`.
 - **UI:** nine languages, RTL Arabic, fullscreen, responsive layout.

@@ -76,8 +76,11 @@ process restart and the HTTP server keeps serving.
   HTTPS the browser instead reads `/api/raw.h264` and decodes with
   `VideoDecoder` (WebCodecs), drawing to a canvas clipped to the thermal frame;
   any failure falls back to MJPEG (`?mjpeg=1` forces it).
-- Snapshot: rendered JPEG + raw thermal + JSON metadata (stats, display,
-  regions, region stats, reference time).
+- Snapshot: rendered JPEG + raw thermal + saved visible frame + JSON metadata
+  (stats, display, regions, region stats, reference time, `has_video`).
+- Re-analysis: the stored view swaps the live `<img>` sources for the saved
+  thermal/visible frames, re-renders thermal on display changes, freezes live
+  stats/peaks, and keeps the viewer modes working until Exit.
 
 ## 5. HTTP and auth
 

@@ -55,6 +55,8 @@ Public paths: `/`, `/i18n/*`, `/api/health`, `/api/version`, `/api/whoami`,
 
 `reanalyze` and `compare` accept `name`, optional `palette`, `clip_lo`,
 `clip_hi`, `span_lo`, `span_hi`; compare also accepts `a`, `b`.
+`reanalyze.json` also returns the snapshot's `peaks`, `regions`, `display` and
+`has_video`, which drives the stored-view UI.
 
 ## Measurement
 
@@ -89,6 +91,7 @@ Public paths: `/`, `/i18n/*`, `/api/health`, `/api/version`, `/api/whoami`,
 | GET | `/api/snapshots.zip` | all snapshots |
 | GET | `/api/snapshots/{name}` | JPEG |
 | GET | `/api/snapshots/{name}.raw` / `.json` | raw samples / metadata |
+| GET | `/api/snapshots/{name}.vis` | saved visible JPEG (new snapshots) |
 | DELETE | `/api/snapshots/{name}` | delete |
 | GET | `/api/captures` | list clips |
 | GET | `/api/captures.zip` | all clips |

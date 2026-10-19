@@ -77,6 +77,16 @@ They are capability-driven. A driver that does not advertise
 `network_settings` or `discover` hides those controls; this is expected. See
 `/api/spec` → `capabilities`.
 
+## Re-analysis has no visible frame
+
+Snapshots taken before visible-frame capture do not have a `.vis` file and show
+thermal only. Take a new snapshot. If a new snapshot still has no video, check
+that the visible feed is running (`Camera → Source → Video`).
+
+## Re-analysis peaks show NaN
+
+Fixed: `reanalyze.json` maps `Peak.celsius` to `c`. Hard-refresh the page.
+
 ## Disk full
 
 `cargo test` builds a large debug tree. `cargo clean --profile dev` frees it

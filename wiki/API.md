@@ -26,7 +26,7 @@ Admin sees everything; guests get per-capability permissions (`measure`,
 | References | `/api/references`, `/api/references/{id}`, `/api/references/{id}/activate`, `/api/reference` |
 | Alarms | `/api/alarms`, `/api/alarms/{id}`, `/api/events` |
 | History | `/api/history.json`, `/api/history.csv` |
-| Snapshots | `/api/snapshot`, `/api/snapshots`, `/api/snapshots.zip`, `/api/snapshots/{name}[.raw|.json]` |
+| Snapshots | `/api/snapshot`, `/api/snapshots`, `/api/snapshots.zip`, `/api/snapshots/{name}[.raw|.json|.vis]` |
 | Clips | `/api/captures`, `/api/captures.zip`, `/api/captures/{name}[.zip]`, `/api/prerecord` |
 | Camera | `/api/camera/settings`, `/api/camera/reboot`, `/api/discover` |
 | Drivers | `/api/drivers`, `/api/camera/select` |
