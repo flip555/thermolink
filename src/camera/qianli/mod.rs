@@ -88,8 +88,11 @@ impl QianliDriver {
                 fps_hint: 30.0,
             }),
             capabilities: super::Capabilities {
-                thermal: true, visible: true, discover: true,
-                network_settings: true, reboot: true,
+                thermal: true,
+                visible: true,
+                discover: true,
+                network_settings: true,
+                reboot: true,
                 controls: vec!["network".to_string()],
             },
             thermal: Some(ThermalStream {
@@ -153,12 +156,7 @@ impl CameraDriver for QianliDriver {
         }
 
         // Last known good values keep the UI useful while the camera is busy.
-        Ok(self
-            .settings
-            .lock()
-            .await
-            .as_ref()
-            .map(|(_, v)| v.clone()))
+        Ok(self.settings.lock().await.as_ref().map(|(_, v)| v.clone()))
     }
 
     async fn write_settings(&self, changes: serde_json::Value) -> Result<serde_json::Value> {
@@ -181,7 +179,7 @@ impl CameraDriver for QianliDriver {
                 sleep(due - now).await;
             }
 
-            if !socks.contains_key(&step.key) {
+            if let std::collections::hash_map::Entry::Vacant(e) = socks.entry(step.key) {
                 let port = if step.port == self.control_port || step.port == self.media_port {
                     step.port
                 } else {
@@ -194,14 +192,12 @@ impl CameraDriver for QianliDriver {
                     }
                 };
                 let s = connect(self.host, port).await?;
-                socks.insert(step.key, s);
+                e.insert(s);
             }
 
             let mut packet = decode_hex(step.hex)?;
             apply_flag(&mut packet, &flags);
-            let stream = socks
-                .get_mut(&step.key)
-                .expect("socket inserted above");
+            let stream = socks.get_mut(&step.key).expect("socket inserted above");
 
             if let Err(e) = stream.write_all(&packet).await {
                 bail!("handshake write failed at {}ms: {e}", step.at_ms);
@@ -636,7 +632,9 @@ mod tests {
             let mut probe = [0u8; 88];
             s.read_exact(&mut probe).await.unwrap();
             s.write_all(&[0u8; 7]).await.unwrap();
-            s.write_all(&config_block("SuperCam", "10.1.2.3")).await.unwrap();
+            s.write_all(&config_block("SuperCam", "10.1.2.3"))
+                .await
+                .unwrap();
         });
 
         let d = driver(port);

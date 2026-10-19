@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -116,7 +116,17 @@ async fn main() -> Result<()> {
             media_port,
             seconds,
             log_every_frames,
-        } => stream(driver, host, control_port, media_port, seconds, log_every_frames).await,
+        } => {
+            stream(
+                driver,
+                host,
+                control_port,
+                media_port,
+                seconds,
+                log_every_frames,
+            )
+            .await
+        }
         Command::Serve {
             driver,
             host,
@@ -142,11 +152,21 @@ fn ensure_tls_cert(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
     std::fs::create_dir_all(data_dir)?;
     let status = std::process::Command::new("openssl")
         .args([
-            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650",
-            "-keyout", key.to_str().context("key path")?,
-            "-out", cert.to_str().context("cert path")?,
-            "-subj", "/CN=thermolink",
-            "-addext", "subjectAltName=IP:172.20.1.85,IP:172.20.5.127,IP:127.0.0.1,DNS:localhost",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "3650",
+            "-keyout",
+            key.to_str().context("key path")?,
+            "-out",
+            cert.to_str().context("cert path")?,
+            "-subj",
+            "/CN=thermolink",
+            "-addext",
+            "subjectAltName=IP:172.20.1.85,IP:172.20.5.127,IP:127.0.0.1,DNS:localhost",
         ])
         .status()
         .context("running openssl")?;
@@ -177,9 +197,10 @@ async fn serve(
     data_dir: PathBuf,
 ) -> Result<()> {
     insert_crypto_provider();
-    let saved: Option<thermolink::config::CameraConfig> = std::fs::read_to_string(data_dir.join("camera.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok());
+    let saved: Option<thermolink::config::CameraConfig> =
+        std::fs::read_to_string(data_dir.join("camera.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
     let (driver, host, control_port, media_port) = match saved {
         Some(c) => (c.driver, c.host, c.control_port, c.media_port),
         None => (driver, host, control_port, media_port),
@@ -216,23 +237,28 @@ async fn serve(
     info!(%bind, "ThermoLink web UI ready");
 
     match ensure_tls_cert(&data_dir) {
-        Ok((cert, key)) => match axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await {
-            Ok(tls) => {
-                let addr: std::net::SocketAddr = "0.0.0.0:8443".parse()?;
-                let https_router = server::router(state.clone())
-                    .layer(axum::middleware::from_fn(mark_https));
-                tokio::spawn(async move {
-                    if let Err(e) = axum_server::bind_rustls(addr, tls)
-                        .serve(https_router.into_make_service_with_connect_info::<std::net::SocketAddr>())
-                        .await
-                    {
-                        warn!(error = %e, "https listener stopped");
-                    }
-                });
-                info!(%addr, "ThermoLink HTTPS ready (self-signed)");
+        Ok((cert, key)) => {
+            match axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await {
+                Ok(tls) => {
+                    let addr: std::net::SocketAddr = "0.0.0.0:8443".parse()?;
+                    let https_router =
+                        server::router(state.clone()).layer(axum::middleware::from_fn(mark_https));
+                    tokio::spawn(async move {
+                        if let Err(e) = axum_server::bind_rustls(addr, tls)
+                            .serve(
+                                https_router
+                                    .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                            )
+                            .await
+                        {
+                            warn!(error = %e, "https listener stopped");
+                        }
+                    });
+                    info!(%addr, "ThermoLink HTTPS ready (self-signed)");
+                }
+                Err(e) => warn!(error = %e, "https disabled: certificate could not be loaded"),
             }
-            Err(e) => warn!(error = %e, "https disabled: certificate could not be loaded"),
-        },
+        }
         Err(e) => warn!(error = %e, "https disabled: certificate could not be created"),
     }
 
@@ -274,7 +300,9 @@ async fn camera_supervisor(st: Arc<AppState>) {
             Ok(Err(e)) => warn!(error = %e, "camera connect failed"),
             Err(_) => warn!(driver = driver.id(), "camera open timed out"),
         }
-        if *gen.borrow() != before { continue; }
+        if *gen.borrow() != before {
+            continue;
+        }
         tokio::time::sleep(Duration::from_secs(backoff)).await;
         backoff = (backoff * 2).min(60);
     }

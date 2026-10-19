@@ -80,7 +80,11 @@ pub async fn latest(repo: &str) -> Result<Release> {
         let detail: String = body.trim().chars().take(300).collect();
         return Err(anyhow!(
             "GitHub returned {status}{}",
-            if detail.is_empty() { String::new() } else { format!(": {detail}") }
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
         ));
     }
     let mut release: Release =
@@ -238,8 +242,7 @@ pub fn install(bytes: &[u8], dest: &Path) -> Result<Installed> {
         .with_context(|| format!("flushing {}", tmp.display()))?;
 
     let backup = if dest.exists() {
-        std::fs::copy(dest, &backup)
-            .with_context(|| format!("backing up {}", dest.display()))?;
+        std::fs::copy(dest, &backup).with_context(|| format!("backing up {}", dest.display()))?;
         Some(backup)
     } else {
         None
@@ -249,7 +252,11 @@ pub fn install(bytes: &[u8], dest: &Path) -> Result<Installed> {
         let _ = std::fs::remove_file(&tmp);
         return Err(anyhow!("replacing {}: {e}", dest.display()));
     }
-    Ok(Installed { path: dest.to_path_buf(), backup, bytes: bytes.len() })
+    Ok(Installed {
+        path: dest.to_path_buf(),
+        backup,
+        bytes: bytes.len(),
+    })
 }
 
 /// Replace the current process image with `exe`, keeping the same PID,

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use thermolink::camera::qianli::QianliDriver;
-use thermolink::camera::{CameraDriver, CameraSession, FramePayload};
+use thermolink::camera::{CameraDriver, FramePayload};
 use thermolink::config::CameraConfig;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -110,8 +110,15 @@ async fn handshake_then_frames() {
         .iter()
         .filter(|p| p.len() == 8 && p[..4] == FLAG)
         .collect();
-    let shown: Vec<String> = starts.iter().map(|p| p.iter().map(|b| format!("{b:02x}")).collect()).collect();
-    assert_eq!(starts.len(), 2, "expected a START per stream, got {shown:?}");
+    let shown: Vec<String> = starts
+        .iter()
+        .map(|p| p.iter().map(|b| format!("{b:02x}")).collect())
+        .collect();
+    assert_eq!(
+        starts.len(),
+        2,
+        "expected a START per stream, got {shown:?}"
+    );
     for p in starts {
         assert_eq!(&p[..4], &FLAG, "START did not carry the live session flag");
         assert_eq!(&p[4..8], &1u32.to_le_bytes());
@@ -130,10 +137,7 @@ async fn handle_media(mut s: TcpStream, seen: Arc<Mutex<Vec<Vec<u8>>>>) {
         };
         buf.extend_from_slice(&chunk[..n]);
 
-        loop {
-            let Some(packet) = take_packet(&mut buf) else {
-                break;
-            };
+        while let Some(packet) = take_packet(&mut buf) {
             seen.lock().await.push(packet.clone());
 
             // Probe: 48 bytes, type 1 at 28..30 -> answer with the flag.
@@ -173,7 +177,9 @@ fn take_packet(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
     }
 
     let len = if buf.starts_with(&magic) {
-        if buf.len() < 48 { return None; }
+        if buf.len() < 48 {
+            return None;
+        }
         48
     } else if buf.starts_with(serial) {
         40

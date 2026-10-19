@@ -8,26 +8,28 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rand_core::{OsRng, RngCore};
+use arc_swap::ArcSwap;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Extension, Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use arc_swap::ArcSwap;
 use bytes::Bytes;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::camera::{Calibration, CameraDriver, CameraSpec, FramePayload, StreamKind, ThermalImage};
+use crate::camera::{
+    Calibration, CameraDriver, CameraSpec, FramePayload, StreamKind, ThermalImage,
+};
 use crate::render::{
     builtin_iso_profiles, dt_jpeg, render_jpeg, validate_iso_bands, DisplaySettings, IsoBand,
-    IsothermState, PALETTES, ISO_PROFILE_LIMIT, ISO_PROFILE_NAME_LIMIT,
+    IsothermState, ISO_PROFILE_LIMIT, ISO_PROFILE_NAME_LIMIT, PALETTES,
 };
 use crate::stream::FrameHub;
 use crate::video::VideoTranscoder;
@@ -64,7 +66,14 @@ pub struct Align {
 
 impl Default for Align {
     fn default() -> Self {
-        Self { x: 0.0, y: 0.0, scale: 1.0, rot: 0.0, flip_h: false, flip_v: false }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            scale: 1.0,
+            rot: 0.0,
+            flip_h: false,
+            flip_v: false,
+        }
     }
 }
 
@@ -88,7 +97,11 @@ pub struct PrerecordConfig {
 
 impl Default for PrerecordConfig {
     fn default() -> Self {
-        Self { enabled: true, before_s: 5, after_s: 5 }
+        Self {
+            enabled: true,
+            before_s: 5,
+            after_s: 5,
+        }
     }
 }
 
@@ -140,8 +153,15 @@ pub struct AuthFile {
 
 /// Capabilities a guest may be granted. Anything outside this list is
 /// admin-only, no matter what a stored file says.
-pub const GUEST_CAPS: [&str; 7] =
-    ["measure", "snapshot", "display", "reference", "calibration", "alarms", "prerecord"];
+pub const GUEST_CAPS: [&str; 7] = [
+    "measure",
+    "snapshot",
+    "display",
+    "reference",
+    "calibration",
+    "alarms",
+    "prerecord",
+];
 
 fn default_guest_perms() -> BTreeMap<String, bool> {
     BTreeMap::from([
@@ -283,6 +303,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         spec: CameraSpec,
         hub: FrameHub,
@@ -358,18 +379,31 @@ impl AppState {
             .map(|r| r.vals.clone());
         let mut session_map: HashMap<String, Session> = HashMap::new();
         if let Ok(text) = std::fs::read_to_string(data_dir.join("sessions.json")) {
-            if let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(&text) {
-                let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            if let Ok(serde_json::Value::Object(obj)) =
+                serde_json::from_str::<serde_json::Value>(&text)
+            {
+                let now_unix = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 for (token, val) in obj {
                     let exp = val["exp"].as_u64().unwrap_or(0);
-                    if exp <= now_unix { continue; }
-                    let role = match val["role"].as_str() { Some("guest") => Role::Guest, _ => Role::Admin };
+                    if exp <= now_unix {
+                        continue;
+                    }
+                    let role = match val["role"].as_str() {
+                        Some("guest") => Role::Guest,
+                        _ => Role::Admin,
+                    };
                     let user = val["user"].as_str().unwrap_or("admin").to_string();
-                    session_map.insert(token, Session {
-                        expires: Instant::now() + Duration::from_secs(exp - now_unix),
-                        role,
-                        user,
-                    });
+                    session_map.insert(
+                        token,
+                        Session {
+                            expires: Instant::now() + Duration::from_secs(exp - now_unix),
+                            role,
+                            user,
+                        },
+                    );
                 }
             }
         }
@@ -466,19 +500,32 @@ impl AppState {
 
     async fn persist_sessions(&self) {
         let now = Instant::now();
-        let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let mut out = serde_json::Map::new();
         let sessions = self.sessions.read().await;
         for (token, s) in sessions.iter() {
-            if s.expires <= now { continue; }
+            if s.expires <= now {
+                continue;
+            }
             let exp = now_unix + s.expires.saturating_duration_since(now).as_secs();
-            out.insert(token.clone(), json!({
-                "exp": exp,
-                "role": s.role.as_str(),
-                "user": s.user,
-            }));
+            out.insert(
+                token.clone(),
+                json!({
+                    "exp": exp,
+                    "role": s.role.as_str(),
+                    "user": s.user,
+                }),
+            );
         }
-        let _ = write_atomic(&self.data_dir, "sessions.json", &serde_json::to_vec(&out).unwrap_or_default()).await;
+        let _ = write_atomic(
+            &self.data_dir,
+            "sessions.json",
+            &serde_json::to_vec(&out).unwrap_or_default(),
+        )
+        .await;
     }
 
     async fn persist_active_ref(&self) -> io::Result<()> {
@@ -492,7 +539,8 @@ impl AppState {
                 )
                 .await
             }
-            None => match tokio::fs::remove_file(self.data_dir.join("reference-active.json")).await {
+            None => match tokio::fs::remove_file(self.data_dir.join("reference-active.json")).await
+            {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
                 Err(e) => Err(e),
@@ -529,7 +577,10 @@ impl AppState {
 /// leaves either the old file or the new one, never a truncated file.
 async fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
     tokio::fs::create_dir_all(dir).await?;
-    let tmp = dir.join(format!(".{name}.{}.tmp", SEQ.fetch_add(1, Ordering::Relaxed)));
+    let tmp = dir.join(format!(
+        ".{name}.{}.tmp",
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     if let Err(e) = tokio::fs::write(&tmp, bytes).await {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e);
@@ -654,9 +705,13 @@ async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats
                 alarm.threshold_c
             );
             let st2 = st.clone();
-            tokio::spawn(async move { send_notifications(&st2, &text).await; });
+            tokio::spawn(async move {
+                send_notifications(&st2, &text).await;
+            });
             let st3 = st.clone();
-            tokio::spawn(async move { begin_clip(&st3).await; });
+            tokio::spawn(async move {
+                begin_clip(&st3).await;
+            });
         }
     }
 }
@@ -691,14 +746,28 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/history.csv", get(history_csv))
         .route("/api/history.json", get(history_json))
         .route("/api/point", get(point))
-        .route("/api/regions", get(get_regions).post(add_region).delete(clear_regions))
+        .route(
+            "/api/regions",
+            get(get_regions).post(add_region).delete(clear_regions),
+        )
         .route("/api/regions/{id}", delete(delete_region))
         .route("/api/regions/{id}/ref", post(set_region_ref))
-        .route("/api/alarms", get(get_alarms).post(add_alarm).delete(clear_alarms))
+        .route(
+            "/api/alarms",
+            get(get_alarms).post(add_alarm).delete(clear_alarms),
+        )
         .route("/api/events", get(list_events))
         .route("/api/alarms/{id}", delete(delete_alarm))
-        .route("/api/reference", post(set_reference).delete(clear_reference))
-        .route("/api/references", get(list_references).post(add_reference).delete(clear_references))
+        .route(
+            "/api/reference",
+            post(set_reference).delete(clear_reference),
+        )
+        .route(
+            "/api/references",
+            get(list_references)
+                .post(add_reference)
+                .delete(clear_references),
+        )
         .route("/api/references/{id}", delete(delete_reference))
         .route("/api/references/{id}/activate", post(activate_reference))
         .route("/api/compare.json", get(compare_json))
@@ -711,7 +780,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/prerecord", get(get_prerecord).post(set_prerecord))
         .route("/api/captures", get(list_captures))
         .route("/api/captures/{name}", get(capture_file))
-        .route("/api/calibration", get(get_calibration).post(set_calibration))
+        .route(
+            "/api/calibration",
+            get(get_calibration).post(set_calibration),
+        )
         .route(
             "/api/camera/settings",
             get(camera_settings).post(camera_settings_write),
@@ -722,7 +794,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/snapshots", get(list_snapshots))
         .route("/api/snapshots.zip", get(snapshots_zip))
         .route("/api/captures.zip", get(captures_zip))
-        .route("/api/snapshots/{name}", get(snapshot_file).delete(delete_snapshot))
+        .route(
+            "/api/snapshots/{name}",
+            get(snapshot_file).delete(delete_snapshot),
+        )
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, auth_mw))
 }
@@ -743,14 +818,20 @@ fn query_token(uri: &axum::http::Uri) -> Option<String> {
 }
 
 fn session_token(headers: &HeaderMap) -> Option<String> {
-    if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+    if let Some(auth) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
         if let Some(token) = auth.strip_prefix("Bearer ") {
             return Some(token.trim().to_string());
         }
     }
     let raw = headers.get(header::COOKIE)?.to_str().ok()?;
-    raw.split(';')
-        .find_map(|part| part.trim().strip_prefix("thermolink_session=").map(str::to_string))
+    raw.split(';').find_map(|part| {
+        part.trim()
+            .strip_prefix("thermolink_session=")
+            .map(str::to_string)
+    })
 }
 
 /// What a request needs before it reaches a handler. Reads are open to any
@@ -840,10 +921,11 @@ async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> R
         Guard::Admin if session.role != Role::Admin => {
             return (StatusCode::FORBIDDEN, "admin only").into_response();
         }
-        Guard::Cap(cap) if session.role != Role::Admin => {
-            if !auth.guest.enabled || !auth.perms().get(cap).copied().unwrap_or(false) {
-                return (StatusCode::FORBIDDEN, "not permitted for this account").into_response();
-            }
+        Guard::Cap(cap)
+            if session.role != Role::Admin
+                && (!auth.guest.enabled || !auth.perms().get(cap).copied().unwrap_or(false)) =>
+        {
+            return (StatusCode::FORBIDDEN, "not permitted for this account").into_response();
         }
         _ => {}
     }
@@ -947,8 +1029,7 @@ async fn setup(
     if st.auth.read().await.is_some() {
         return Err((StatusCode::CONFLICT, "already set up".into()));
     }
-    let local = addr.ip().is_loopback()
-        || matches!(addr.ip(), IpAddr::V4(v4) if v4.is_private());
+    let local = addr.ip().is_loopback() || matches!(addr.ip(), IpAddr::V4(v4) if v4.is_private());
     let token_ok = headers
         .get("x-setup-token")
         .and_then(|v| v.to_str().ok())
@@ -964,7 +1045,10 @@ async fn setup(
         return Err((StatusCode::BAD_REQUEST, "username too short".into()));
     }
     if c.password.len() < 6 {
-        return Err((StatusCode::BAD_REQUEST, "password must be at least 6 characters".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "password must be at least 6 characters".into(),
+        ));
     }
     let hash = hash_password(&c.password)?;
     *st.auth.write().await = Some(AuthFile {
@@ -979,7 +1063,10 @@ async fn setup(
     }
     tracing::info!(user = %username, "admin account created");
     let secure = is_secure_request(&headers);
-    Ok(session_response(new_session(&st, Role::Admin, &username).await, secure))
+    Ok(session_response(
+        new_session(&st, Role::Admin, &username).await,
+        secure,
+    ))
 }
 
 async fn login(
@@ -1003,7 +1090,10 @@ async fn login(
         return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
     };
     let secure = is_secure_request(&headers);
-    Ok(session_response(new_session(&st, role, &user).await, secure))
+    Ok(session_response(
+        new_session(&st, role, &user).await,
+        secure,
+    ))
 }
 
 async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -1023,8 +1113,13 @@ async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum AccountAction {
-    Username { username: String },
-    Password { current: String, new: String },
+    Username {
+        username: String,
+    },
+    Password {
+        current: String,
+        new: String,
+    },
     Guest {
         enabled: bool,
         #[serde(default)]
@@ -1089,7 +1184,10 @@ async fn update_account(
         }
         AccountAction::Password { current, new } => {
             if !verify_hash(&current, &auth.hash) {
-                return Err((StatusCode::UNAUTHORIZED, "current password is not right".into()));
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "current password is not right".into(),
+                ));
             }
             if new.len() < 8 {
                 return Err((
@@ -1245,9 +1343,13 @@ async fn select_camera(
         media_port: req.media_port.unwrap_or(3000),
         ..Default::default()
     };
-    write_atomic(&st.data_dir, "camera.json", &serde_json::to_vec(&cfg_obj).unwrap_or_default())
-        .await
-        .map_err(persist_error)?;
+    write_atomic(
+        &st.data_dir,
+        "camera.json",
+        &serde_json::to_vec(&cfg_obj).unwrap_or_default(),
+    )
+    .await
+    .map_err(persist_error)?;
     let driver: Arc<dyn CameraDriver> = Arc::from(
         crate::camera::registry::build(&cfg_obj)
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
@@ -1359,21 +1461,37 @@ async fn set_display(
     let mut next = st.display.read().await.clone();
     if let Some(palette) = patch.palette {
         if !PALETTES.contains(&palette.as_str()) {
-            return Err((StatusCode::BAD_REQUEST, format!("unknown palette {palette:?}")));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unknown palette {palette:?}"),
+            ));
         }
         next.palette = palette;
     }
-    if let Some(v) = patch.clip_lo { next.clip_lo = v; }
-    if let Some(v) = patch.clip_hi { next.clip_hi = v; }
-    if let Some(v) = patch.span_lo { next.span_lo = v; }
-    if let Some(v) = patch.span_hi { next.span_hi = v; }
+    if let Some(v) = patch.clip_lo {
+        next.clip_lo = v;
+    }
+    if let Some(v) = patch.clip_hi {
+        next.clip_hi = v;
+    }
+    if let Some(v) = patch.span_lo {
+        next.span_lo = v;
+    }
+    if let Some(v) = patch.span_hi {
+        next.span_hi = v;
+    }
     if let Some(v) = patch.dt_span {
         if !(0.5..=50.0).contains(&v) {
-            return Err((StatusCode::BAD_REQUEST, "dt_span must be between 0.5 and 50 C".into()));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "dt_span must be between 0.5 and 50 C".into(),
+            ));
         }
         next.dt_span = v;
     }
-    if let Some(v) = patch.iso_bands { next.iso_bands = v; }
+    if let Some(v) = patch.iso_bands {
+        next.iso_bands = v;
+    }
     *st.display.write().await = next.clone();
     st.persist_display().await.map_err(persist_error)?;
     Ok(Json(next))
@@ -1411,7 +1529,10 @@ async fn set_isotherm(
 
     if let Some(name) = req.apply {
         let Some(bands) = state.profiles.get(&name).cloned() else {
-            return Err((StatusCode::NOT_FOUND, format!("unknown isotherm profile {name:?}")));
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("unknown isotherm profile {name:?}"),
+            ));
         };
         state.current = name;
         display.iso_bands = bands;
@@ -1435,7 +1556,10 @@ async fn set_isotherm(
                 format!("at most {ISO_PROFILE_LIMIT} profiles are allowed"),
             ));
         }
-        let bands = req.bands.clone().unwrap_or_else(|| display.iso_bands.clone());
+        let bands = req
+            .bands
+            .clone()
+            .unwrap_or_else(|| display.iso_bands.clone());
         validate_iso_bands(&bands).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
         state.profiles.insert(name.clone(), bands.clone());
         state.current = name;
@@ -1443,7 +1567,10 @@ async fn set_isotherm(
     } else if let Some(name) = req.delete {
         let builtins = builtin_iso_profiles();
         if !state.profiles.contains_key(&name) {
-            return Err((StatusCode::NOT_FOUND, format!("unknown isotherm profile {name:?}")));
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("unknown isotherm profile {name:?}"),
+            ));
         }
         if builtins.contains_key(&name) {
             return Err((
@@ -1483,15 +1610,25 @@ async fn set_isotherm(
 
 async fn thermal_cached(st: &Arc<AppState>) -> Result<Bytes, (StatusCode, String)> {
     let Some(frame) = st.hub.latest(StreamKind::Thermal).await else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()));
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no thermal frame yet".into(),
+        ));
     };
     let Some(img) = frame.thermal() else {
         return Err((StatusCode::SERVICE_UNAVAILABLE, "no thermal image".into()));
     };
     let calibration = *st.calibration.read().await;
-    let img = ThermalImage { calibration, ..img.clone() };
+    let img = ThermalImage {
+        calibration,
+        ..img.clone()
+    };
     let display = st.display.read().await.clone();
-    let sig = format!("{}:{calibration:?}:{}", frame.seq, serde_json::to_string(&display).unwrap_or_default());
+    let sig = format!(
+        "{}:{calibration:?}:{}",
+        frame.seq,
+        serde_json::to_string(&display).unwrap_or_default()
+    );
     {
         let cache = st.thermal_cache.lock().await;
         if let Some((seq, cached_sig, jpeg)) = cache.as_ref() {
@@ -1522,7 +1659,7 @@ async fn thermal_mjpg(State(st): State<Arc<AppState>>) -> Response {
             tick.tick().await;
             let Ok(jpeg) = thermal_cached(&st).await else { continue };
             yield Ok::<Bytes, std::io::Error>(Bytes::from(multipart_head(&jpeg)));
-            yield Ok(Bytes::from(jpeg));
+            yield Ok(jpeg);
             yield Ok(Bytes::from_static(b"\r\n"));
         }
     };
@@ -1534,7 +1671,9 @@ async fn video_jpg(State(st): State<Arc<AppState>>) -> Response {
         return (StatusCode::SERVICE_UNAVAILABLE, "ffmpeg unavailable").into_response();
     };
     if !video.alive() {
-        let reason = video.last_error().unwrap_or_else(|| "transcoder restarting".into());
+        let reason = video
+            .last_error()
+            .unwrap_or_else(|| "transcoder restarting".into());
         return (StatusCode::SERVICE_UNAVAILABLE, reason).into_response();
     }
     match video.latest() {
@@ -1623,10 +1762,10 @@ async fn point(
     State(st): State<Arc<AppState>>,
     Query(q): Query<PointQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let img = st
-        .thermal_image()
-        .await
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let img = st.thermal_image().await.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no thermal frame yet".into(),
+    ))?;
     let c = img
         .celsius_at(q.x, q.y)
         .ok_or((StatusCode::BAD_REQUEST, "point outside the frame".into()))?;
@@ -1697,7 +1836,9 @@ async fn add_region(
     st.persist_regions().await.map_err(persist_error)?;
     let img = st.thermal_image().await;
     let stats = img.as_ref().and_then(|i| region_stats(i, &region));
-    Ok(Json(json!({ "region": region, "stats": stats, "regions": st.regions.read().await.clone() })))
+    Ok(Json(
+        json!({ "region": region, "stats": stats, "regions": st.regions.read().await.clone() }),
+    ))
 }
 
 async fn delete_region(
@@ -1767,13 +1908,19 @@ async fn add_alarm(
         } else {
             req.name
         },
-        kind: if req.kind == "below" { "below".into() } else { "above".into() },
+        kind: if req.kind == "below" {
+            "below".into()
+        } else {
+            "above".into()
+        },
         threshold_c: req.threshold_c,
         dwell_s: req.dwell_s.min(3600),
     };
     st.alarms.write().await.push(alarm.clone());
     st.persist_alarms().await.map_err(persist_error)?;
-    Ok(Json(json!({ "alarm": alarm, "alarms": st.alarms.read().await.clone() })))
+    Ok(Json(
+        json!({ "alarm": alarm, "alarms": st.alarms.read().await.clone() }),
+    ))
 }
 
 async fn delete_alarm(
@@ -1828,10 +1975,10 @@ async fn add_reference(
     State(st): State<Arc<AppState>>,
     Json(req): Json<ReferenceRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let img = st
-        .thermal_image()
-        .await
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let img = st.thermal_image().await.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no thermal frame yet".into(),
+    ))?;
     let vals: Vec<u16> = img.values().collect();
     let id = format!("r{}", now_secs() * 1000 + now_ms() % 1000);
     let name = if req.name.trim().is_empty() {
@@ -1908,10 +2055,7 @@ struct CompareQuery {
     span: Option<f32>,
 }
 
-fn checked_span(
-    requested: Option<f32>,
-    fallback: f32,
-) -> Result<f32, (StatusCode, String)> {
+fn checked_span(requested: Option<f32>, fallback: f32) -> Result<f32, (StatusCode, String)> {
     let span = requested.unwrap_or(fallback);
     if !span.is_finite() || !(0.5..=50.0).contains(&span) {
         return Err((
@@ -1924,7 +2068,8 @@ fn checked_span(
 
 fn thermal_dims(st: &AppState) -> (u32, u32) {
     let camera = st.camera.load();
-    camera.spec
+    camera
+        .spec
         .thermal
         .as_ref()
         .map(|t| (t.width, t.height))
@@ -2002,7 +2147,11 @@ async fn compare_json(
         let (w, h) = thermal_dims(&st);
         let ia = reference_image(&ra, fallback, w, h);
         let ib = reference_image(&rb, fallback, w, h);
-        return Ok(Json(diff_stats(&format!("{} vs {}", ra.name, rb.name), &ia, &ib)));
+        return Ok(Json(diff_stats(
+            &format!("{} vs {}", ra.name, rb.name),
+            &ia,
+            &ib,
+        )));
     }
     let Some(name) = q.name else {
         return Err((
@@ -2011,17 +2160,14 @@ async fn compare_json(
         ));
     };
     let snap = load_snapshot(&st, &name)?;
-    let cur = st
-        .thermal_image()
-        .await
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let cur = st.thermal_image().await.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no thermal frame yet".into(),
+    ))?;
     Ok(Json(diff_stats(&name, &cur, &snap)))
 }
 
-async fn compare_jpg(
-    State(st): State<Arc<AppState>>,
-    Query(q): Query<CompareQuery>,
-) -> Response {
+async fn compare_jpg(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>) -> Response {
     let display = st.display.read().await.clone();
     let span = match checked_span(q.span, display.dt_span) {
         Ok(v) => v,
@@ -2046,7 +2192,11 @@ async fn compare_jpg(
         };
     }
     let Some(name) = q.name else {
-        return (StatusCode::BAD_REQUEST, "compare needs name, or both a and b").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "compare needs name, or both a and b",
+        )
+            .into_response();
     };
     let snap = match load_snapshot(&st, &name) {
         Ok(s) => s,
@@ -2066,10 +2216,10 @@ async fn set_reference(
     State(st): State<Arc<AppState>>,
     Query(q): Query<CompareQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let img = st
-        .thermal_image()
-        .await
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let img = st.thermal_image().await.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no thermal frame yet".into(),
+    ))?;
     if q.span.is_some() {
         let display = st.display.read().await.clone();
         let span = checked_span(q.span, display.dt_span)?;
@@ -2148,7 +2298,10 @@ async fn dt_mjpg(State(st): State<Arc<AppState>>) -> Response {
     mjpeg_response(stream)
 }
 
-async fn dt_json(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>) -> Json<serde_json::Value> {
+async fn dt_json(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<CompareQuery>,
+) -> Json<serde_json::Value> {
     if let (Some(a), Some(b)) = (&q.a, &q.b) {
         let list = st.references.read().await.clone();
         let (Ok(ra), Ok(rb)) = (find_reference(&list, a), find_reference(&list, b)) else {
@@ -2213,7 +2366,10 @@ async fn camera_reboot(
             "send {\"confirm\":\"reboot\"} to confirm".into(),
         ));
     }
-    st.camera.load().driver.clone()
+    st.camera
+        .load()
+        .driver
+        .clone()
         .reboot()
         .await
         .map(Json)
@@ -2255,7 +2411,11 @@ async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         let sem = sem.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.ok()?;
-            if probe_camera(&ip).await { Some(ip) } else { None }
+            if probe_camera(&ip).await {
+                Some(ip)
+            } else {
+                None
+            }
         }));
     }
     let mut hosts = Vec::new();
@@ -2312,7 +2472,10 @@ async fn camera_settings_write(
                 format!("{key} is not a valid IPv4 address"),
             ));
         }
-        changes.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        changes.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
     if changes.is_empty() {
         return Err((
@@ -2321,7 +2484,11 @@ async fn camera_settings_write(
         ));
     }
 
-    let out = st.camera.load().driver.clone()
+    let out = st
+        .camera
+        .load()
+        .driver
+        .clone()
         .write_settings(serde_json::Value::Object(changes))
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -2394,10 +2561,10 @@ async fn set_calibration(
 async fn snapshot(
     State(st): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let img = st
-        .thermal_image()
-        .await
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    let img = st.thermal_image().await.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no thermal frame yet".into(),
+    ))?;
     let display = st.display.read().await.clone();
     let jpeg = render_jpeg(&img, &display, 90)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2408,7 +2575,8 @@ async fn snapshot(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let name = format!("{}-{:03}", now.as_secs(), now.subsec_millis());
     let dir = st.snapshots_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     std::fs::write(dir.join(format!("{name}.jpg")), &jpeg)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     std::fs::write(dir.join(format!("{name}.raw")), &img.raw)
@@ -2421,12 +2589,21 @@ async fn snapshot(
         false
     };
     let regions = st.regions.read().await.clone();
-    let mut rstats: Vec<serde_json::Value> = regions.iter().filter_map(|r| region_stats(&img, r)).collect();
+    let mut rstats: Vec<serde_json::Value> = regions
+        .iter()
+        .filter_map(|r| region_stats(&img, r))
+        .collect();
     attach_deltas(&img, &regions, &mut rstats);
     let reference_at = {
         let active = st.active_ref.read().await.clone();
         match active {
-            Some(id) => st.references.read().await.iter().find(|r| r.id == id).map(|r| r.at),
+            Some(id) => st
+                .references
+                .read()
+                .await
+                .iter()
+                .find(|r| r.id == id)
+                .map(|r| r.at),
             None => None,
         }
     };
@@ -2471,11 +2648,6 @@ async fn list_snapshots(State(st): State<Arc<AppState>>) -> Json<serde_json::Val
     Json(json!({ "snapshots": names }))
 }
 
-#[derive(Deserialize)]
-struct NameQuery {
-    name: String,
-}
-
 fn safe_name(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -2499,10 +2671,16 @@ fn load_snapshot(st: &AppState, name: &str) -> Result<ThermalImage, (StatusCode,
     let width = meta["w"].as_u64().unwrap_or(160) as u32;
     let height = meta["h"].as_u64().unwrap_or(120) as u32;
     if width == 0 || height == 0 {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "invalid stored frame size".into()));
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid stored frame size".into(),
+        ));
     }
     if raw.len() != (width * height * 2) as usize {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "stored frame size mismatch".into()));
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "stored frame size mismatch".into(),
+        ));
     }
     Ok(ThermalImage {
         width,
@@ -2527,7 +2705,10 @@ struct ReanalyzeQuery {
     span_hi: Option<f32>,
 }
 
-fn reanalyze_display(base: &DisplaySettings, q: &ReanalyzeQuery) -> Result<DisplaySettings, (StatusCode, String)> {
+fn reanalyze_display(
+    base: &DisplaySettings,
+    q: &ReanalyzeQuery,
+) -> Result<DisplaySettings, (StatusCode, String)> {
     let mut display = base.clone();
     if let Some(palette) = &q.palette {
         if !PALETTES.contains(&palette.as_str()) {
@@ -2535,10 +2716,18 @@ fn reanalyze_display(base: &DisplaySettings, q: &ReanalyzeQuery) -> Result<Displ
         }
         display.palette = palette.clone();
     }
-    if let Some(v) = q.clip_lo { display.clip_lo = Some(v); }
-    if let Some(v) = q.clip_hi { display.clip_hi = Some(v); }
-    if let Some(v) = q.span_lo { display.span_lo = Some(v); }
-    if let Some(v) = q.span_hi { display.span_hi = Some(v); }
+    if let Some(v) = q.clip_lo {
+        display.clip_lo = Some(v);
+    }
+    if let Some(v) = q.clip_hi {
+        display.clip_hi = Some(v);
+    }
+    if let Some(v) = q.span_lo {
+        display.span_lo = Some(v);
+    }
+    if let Some(v) = q.span_hi {
+        display.span_hi = Some(v);
+    }
     Ok(display)
 }
 
@@ -2611,7 +2800,9 @@ fn zip_directory(dir: &std::path::Path) -> anyhow::Result<Vec<u8>> {
                 .collect();
             paths.sort();
             for path in paths {
-                let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
                 let bytes = std::fs::read(&path)?;
                 writer.start_file(name, options)?;
                 writer.write_all(&bytes)?;
@@ -2649,7 +2840,10 @@ async fn delete_snapshot(
     State(st): State<Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Json<serde_json::Value> {
-    if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         let dir = st.snapshots_dir();
         for ext in ["jpg", "raw", "json"] {
             let _ = std::fs::remove_file(dir.join(format!("{name}.{ext}")));
@@ -2669,7 +2863,11 @@ async fn snapshot_file(
     {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
-    let file = if name.ends_with(".vis") { name.clone() } else { format!("{name}.jpg") };
+    let file = if name.ends_with(".vis") {
+        name.clone()
+    } else {
+        format!("{name}.jpg")
+    };
     let path = st.snapshots_dir().join(file);
     match std::fs::read(path) {
         Ok(bytes) => jpeg_response(bytes),
@@ -2685,17 +2883,27 @@ pub fn spawn_prerecorder(st: Arc<AppState>) {
         loop {
             tick.tick().await;
             let cfg = st.prerecord.read().await.clone();
-            let Some(img) = st.thermal_image().await else { continue };
+            let Some(img) = st.thermal_image().await else {
+                continue;
+            };
             let display = st.display.read().await.clone();
-            let Ok(jpeg) = render_jpeg(&img, &display, 75) else { continue };
+            let Ok(jpeg) = render_jpeg(&img, &display, 75) else {
+                continue;
+            };
             let now = Instant::now();
             let jpeg = Bytes::from(jpeg);
 
             {
                 let mut ring = st.prerec_ring.lock().await;
-                ring.push_back(RingFrame { at: now, jpeg: jpeg.clone() });
+                ring.push_back(RingFrame {
+                    at: now,
+                    jpeg: jpeg.clone(),
+                });
                 let keep = Duration::from_secs(cfg.before_s.max(1) as u64 + 10);
-                while ring.front().is_some_and(|f| now.duration_since(f.at) > keep) {
+                while ring
+                    .front()
+                    .is_some_and(|f| now.duration_since(f.at) > keep)
+                {
                     ring.pop_front();
                 }
                 if ring.len() > 2000 {
@@ -2815,7 +3023,10 @@ async fn capture_file(
         Some(base) => (base.to_string(), true),
         None => (name.clone(), false),
     };
-    if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !base
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
     if want_zip {
@@ -2907,7 +3118,11 @@ async fn set_notify(
     let mut n = st.notify.write().await;
     let put = |slot: &mut Option<String>, value: Option<String>| {
         if let Some(v) = value {
-            *slot = if v.trim().is_empty() { None } else { Some(v.trim().to_string()) };
+            *slot = if v.trim().is_empty() {
+                None
+            } else {
+                Some(v.trim().to_string())
+            };
         }
     };
     put(&mut n.discord, req.discord);
@@ -2936,7 +3151,12 @@ async fn send_notifications(st: &Arc<AppState>, text: &str) {
         .unwrap_or_default();
 
     if let Some(url) = cfg.discord.as_deref() {
-        if let Err(e) = client.post(url).json(&json!({ "content": text })).send().await {
+        if let Err(e) = client
+            .post(url)
+            .json(&json!({ "content": text }))
+            .send()
+            .await
+        {
             tracing::warn!(error = %e, "discord notification failed");
         }
     }
@@ -2945,7 +3165,8 @@ async fn send_notifications(st: &Arc<AppState>, text: &str) {
             tracing::warn!(error = %e, "slack notification failed");
         }
     }
-    if let (Some(token), Some(chat)) = (cfg.telegram_token.as_deref(), cfg.telegram_chat.as_deref()) {
+    if let (Some(token), Some(chat)) = (cfg.telegram_token.as_deref(), cfg.telegram_chat.as_deref())
+    {
         let url = format!("https://api.telegram.org/bot{token}/sendMessage");
         if let Err(e) = client
             .post(url)
@@ -2983,8 +3204,11 @@ async fn update_check() -> Result<Json<serde_json::Value>, (StatusCode, String)>
     let repo = crate::update::repo();
     let release = crate::update::latest(&repo).await.map_err(upstream_error)?;
     let current = env!("CARGO_PKG_VERSION");
-    let asset =
-        crate::update::pick_asset(&release.assets, std::env::consts::OS, std::env::consts::ARCH);
+    let asset = crate::update::pick_asset(
+        &release.assets,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
     Ok(Json(json!({
         "ok": true,
         "current": current,
@@ -3008,19 +3232,22 @@ async fn update_apply(
     if release.tag.is_empty() {
         return Err((StatusCode::BAD_GATEWAY, "release has no tag".into()));
     }
-    let asset =
-        crate::update::pick_asset(&release.assets, std::env::consts::OS, std::env::consts::ARCH)
-            .ok_or_else(|| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!(
-                        "release {} has no binary asset for {} {}",
-                        release.tag,
-                        std::env::consts::OS,
-                        std::env::consts::ARCH
-                    ),
-                )
-            })?;
+    let asset = crate::update::pick_asset(
+        &release.assets,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .ok_or_else(|| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "release {} has no binary asset for {} {}",
+                release.tag,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ),
+        )
+    })?;
     let bytes = crate::update::download(&asset.url)
         .await
         .map_err(upstream_error)?;
@@ -3069,10 +3296,7 @@ async fn set_region_ref(
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn regions_csv(
-    State(st): State<Arc<AppState>>,
-    Query(q): Query<CsvClear>,
-) -> Response {
+async fn regions_csv(State(st): State<Arc<AppState>>, Query(q): Query<CsvClear>) -> Response {
     let log = st.data_dir.join("regions.csv");
     if q.clear.unwrap_or(false) {
         let _ = std::fs::remove_file(&log);
@@ -3100,16 +3324,16 @@ async fn regions_csv(
             s["min_c"].as_f64().unwrap_or(0.0),
             s["avg_c"].as_f64().unwrap_or(0.0),
             s["max_c"].as_f64().unwrap_or(0.0),
-            s["delta_c"].as_f64().map(|v| format!("{v:.2}")).unwrap_or_default(),
+            s["delta_c"]
+                .as_f64()
+                .map(|v| format!("{v:.2}"))
+                .unwrap_or_default(),
         ));
     }
     text_response(out, "text/csv; charset=utf-8")
 }
 
-async fn history_csv(
-    State(st): State<Arc<AppState>>,
-    Query(q): Query<HistoryQuery>,
-) -> Response {
+async fn history_csv(State(st): State<Arc<AppState>>, Query(q): Query<HistoryQuery>) -> Response {
     if q.clear.unwrap_or(false) {
         st.history.clear().await;
     }
@@ -3119,12 +3343,18 @@ async fn history_csv(
     }
     let mut out = String::from("t,min_c,max_c,mean_c\n");
     for s in samples {
-        out.push_str(&format!("{},{:.2},{:.2},{:.2}\n", s.t, s.min_c, s.max_c, s.mean_c));
+        out.push_str(&format!(
+            "{},{:.2},{:.2},{:.2}\n",
+            s.t, s.min_c, s.max_c, s.mean_c
+        ));
     }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
-        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"temperature.csv\"")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"temperature.csv\"",
+        )
         .body(Body::from(out))
         .unwrap()
 }
@@ -3135,7 +3365,10 @@ async fn append_region_log(st: &Arc<AppState>, img: &ThermalImage) {
     if regions.is_empty() {
         return;
     }
-    let mut stats: Vec<serde_json::Value> = regions.iter().filter_map(|r| region_stats(img, r)).collect();
+    let mut stats: Vec<serde_json::Value> = regions
+        .iter()
+        .filter_map(|r| region_stats(img, r))
+        .collect();
     attach_deltas(img, &regions, &mut stats);
     let path = st.data_dir.join("regions.csv");
     let fresh = !path.exists();
@@ -3154,13 +3387,23 @@ async fn append_region_log(st: &Arc<AppState>, img: &ThermalImage) {
             s["min_c"].as_f64().unwrap_or(0.0),
             s["avg_c"].as_f64().unwrap_or(0.0),
             s["max_c"].as_f64().unwrap_or(0.0),
-            s["delta_c"].as_f64().map(|v| format!("{v:.2}")).unwrap_or_default(),
+            s["delta_c"]
+                .as_f64()
+                .map(|v| format!("{v:.2}"))
+                .unwrap_or_default(),
         ));
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = f.write_all(out.as_bytes());
     }
-    if std::fs::metadata(&path).map(|m| m.len() > 10 * 1024 * 1024).unwrap_or(false) {
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > 10 * 1024 * 1024)
+        .unwrap_or(false)
+    {
         let _ = std::fs::rename(&path, st.data_dir.join("regions.csv.1"));
     }
 }
@@ -3251,8 +3494,7 @@ fn inside(region: &Region, x: i32, y: i32) -> bool {
                 let (xj, yj) = (pts[j][0], pts[j][1]);
                 if (yi > y) != (yj > y)
                     && (x as f32)
-                        < (xj - xi) as f32 * (y - yi) as f32 / (yj - yi) as f32
-                            + xi as f32
+                        < (xj - xi) as f32 * (y - yi) as f32 / (yj - yi) as f32 + xi as f32
                 {
                     inside = !inside;
                 }
@@ -3336,12 +3578,27 @@ mod tests {
             validate_iso_bands(bands).expect("built-in bands are valid");
         }
 
-        let flat = vec![IsoBand { lo: 5.0, hi: 5.0, colour: "#ffffff".into() }];
+        let flat = vec![IsoBand {
+            lo: 5.0,
+            hi: 5.0,
+            colour: "#ffffff".into(),
+        }];
         assert!(validate_iso_bands(&flat).is_err(), "hi must exceed lo");
-        let colour = vec![IsoBand { lo: 1.0, hi: 2.0, colour: "red".into() }];
-        assert!(validate_iso_bands(&colour).is_err(), "colour must be #rrggbb");
+        let colour = vec![IsoBand {
+            lo: 1.0,
+            hi: 2.0,
+            colour: "red".into(),
+        }];
+        assert!(
+            validate_iso_bands(&colour).is_err(),
+            "colour must be #rrggbb"
+        );
         let too_many = vec![
-            IsoBand { lo: 0.0, hi: 1.0, colour: "#ffffff".into() };
+            IsoBand {
+                lo: 0.0,
+                hi: 1.0,
+                colour: "#ffffff".into()
+            };
             crate::render::ISO_BAND_LIMIT + 1
         ];
         assert!(validate_iso_bands(&too_many).is_err(), "band cap");
@@ -3349,12 +3606,17 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn isotherm_state_round_trips() {
         let mut state = IsothermState::default();
         state.current = "mine".into();
         state.profiles.insert(
             "mine".into(),
-            vec![IsoBand { lo: 10.0, hi: 20.0, colour: "#00ff00".into() }],
+            vec![IsoBand {
+                lo: 10.0,
+                hi: 20.0,
+                colour: "#00ff00".into(),
+            }],
         );
         let text = serde_json::to_string(&state).expect("encode");
         let back: IsothermState = serde_json::from_str(&text).expect("decode");
@@ -3402,10 +3664,7 @@ mod tests {
             guard_for(&Method::POST, "/api/camera/settings", None),
             Guard::Admin
         );
-        assert_eq!(
-            guard_for(&Method::POST, "/api/account", None),
-            Guard::Admin
-        );
+        assert_eq!(guard_for(&Method::POST, "/api/account", None), Guard::Admin);
     }
 
     #[test]
@@ -3414,9 +3673,9 @@ mod tests {
         let auth: AuthFile = serde_json::from_str(old).expect("legacy auth.json");
         assert!(!auth.guest.enabled);
         let perms = auth.perms();
-        assert_eq!(perms["measure"], true);
-        assert_eq!(perms["snapshot"], true);
-        assert_eq!(perms["calibration"], false);
+        assert!(perms["measure"]);
+        assert!(perms["snapshot"]);
+        assert!(!perms["calibration"]);
         assert!(!perms.contains_key("camera"));
     }
 
@@ -3426,9 +3685,12 @@ mod tests {
             "guest_perms":{"measure":false,"alarms":true,"camera":true}}"#;
         let auth: AuthFile = serde_json::from_str(text).expect("auth.json");
         let perms = auth.perms();
-        assert_eq!(perms["measure"], false);
-        assert_eq!(perms["alarms"], true);
-        assert!(!perms.contains_key("camera"), "unknown caps are never granted");
+        assert!(!perms["measure"]);
+        assert!(perms["alarms"]);
+        assert!(
+            !perms.contains_key("camera"),
+            "unknown caps are never granted"
+        );
     }
 
     #[test]
@@ -3467,7 +3729,9 @@ mod tests {
             res.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/json; charset=utf-8"
         );
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed["tab.alarms"], "Alarme");
 
@@ -3499,9 +3763,15 @@ mod tests {
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
-        write_atomic(&dir, "state.json", b"{\"v\":1}").await.expect("first write");
-        write_atomic(&dir, "state.json", b"{\"v\":2}").await.expect("replace");
-        let body = tokio::fs::read_to_string(dir.join("state.json")).await.unwrap();
+        write_atomic(&dir, "state.json", b"{\"v\":1}")
+            .await
+            .expect("first write");
+        write_atomic(&dir, "state.json", b"{\"v\":2}")
+            .await
+            .expect("replace");
+        let body = tokio::fs::read_to_string(dir.join("state.json"))
+            .await
+            .unwrap();
         assert_eq!(body, "{\"v\":2}");
         // No temporary file is left behind.
         let mut entries = tokio::fs::read_dir(&dir).await.unwrap();

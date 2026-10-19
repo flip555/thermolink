@@ -9,8 +9,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 
 use super::{
-    Calibration, CameraDriver, CameraSession, CameraSpec, Capabilities, ThermalImage,
-    ThermalStream,
+    Calibration, CameraDriver, CameraSession, CameraSpec, Capabilities, ThermalImage, ThermalStream,
 };
 use crate::config::CameraConfig;
 

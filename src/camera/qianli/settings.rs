@@ -168,7 +168,14 @@ mod tests {
         for good in ["192.168.1.85", "0.0.0.0", "255.255.255.255", "10.0.0.1"] {
             assert!(crate::camera::validate_ipv4(good), "{good}");
         }
-        for bad in ["", "192.168.1", "192.168.1.256", "192.168.01.1", "a.b.c.d", "1.2.3.4.5"] {
+        for bad in [
+            "",
+            "192.168.1",
+            "192.168.1.256",
+            "192.168.01.1",
+            "a.b.c.d",
+            "1.2.3.4.5",
+        ] {
             assert!(!crate::camera::validate_ipv4(bad), "{bad}");
         }
     }

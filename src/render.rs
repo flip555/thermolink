@@ -48,8 +48,8 @@ pub fn builtin_iso_profiles() -> BTreeMap<String, Vec<IsoBand>> {
     let mut out = BTreeMap::new();
     out.insert("pcba 25-60".to_string(), default_iso_bands());
     let colours = [
-        "#1f6feb", "#2f8be0", "#16c4c4", "#7fd6b0", "#b9e08a", "#ffe14d", "#ffb347",
-        "#ff8c42", "#ff5e3a", "#ff3b30",
+        "#1f6feb", "#2f8be0", "#16c4c4", "#7fd6b0", "#b9e08a", "#ffe14d", "#ffb347", "#ff8c42",
+        "#ff5e3a", "#ff3b30",
     ];
     out.insert(
         "fine 1C".to_string(),
@@ -82,9 +82,7 @@ pub fn validate_iso_bands(bands: &[IsoBand]) -> Result<(), String> {
             return Err(format!("band {} is outside -100..1000 C", i + 1));
         }
         let colour = band.colour.as_bytes();
-        if colour.len() != 7
-            || colour[0] != b'#'
-            || !colour[1..].iter().all(u8::is_ascii_hexdigit)
+        if colour.len() != 7 || colour[0] != b'#' || !colour[1..].iter().all(u8::is_ascii_hexdigit)
         {
             return Err(format!("band {} colour must be #rrggbb", i + 1));
         }
@@ -285,9 +283,54 @@ pub fn render_jpeg(
     Ok(out)
 }
 
+/// Signed difference image: blue = colder than the reference, white = same,
+/// red = hotter, clamped to +/- `span_c`.
+pub fn render_dt(img: &ThermalImage, reference: &[u16], span_c: f32) -> Vec<u8> {
+    let n = img.pixel_count();
+    let mut rgb = vec![0u8; n * 3];
+    let span = if span_c.abs() < 0.01 {
+        1.0
+    } else {
+        span_c.abs()
+    };
+    for (i, v) in img.values().enumerate() {
+        let Some(&r) = reference.get(i) else {
+            rgb[i * 3..i * 3 + 3].copy_from_slice(&[255, 255, 255]);
+            continue;
+        };
+        let d = (v as f32 - r as f32) * img.calibration.scale;
+        let t = (d / span).clamp(-1.0, 1.0);
+        let colour = if t < 0.0 {
+            let k = 1.0 + t; // 0 at -span, 1 at zero
+            [(255.0 * k) as u8, (255.0 * k) as u8, 255]
+        } else {
+            [255, (255.0 * (1.0 - t)) as u8, (255.0 * (1.0 - t)) as u8]
+        };
+        rgb[i * 3..i * 3 + 3].copy_from_slice(&colour);
+    }
+    rgb
+}
+
+pub fn dt_jpeg(
+    img: &ThermalImage,
+    reference: &[u16],
+    span_c: f32,
+    quality: u8,
+) -> anyhow::Result<Vec<u8>> {
+    let rgb = render_dt(img, reference, span_c);
+    let mut out = Vec::new();
+    let encoder = jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100));
+    encoder.encode(
+        &rgb,
+        img.width as u16,
+        img.height as u16,
+        jpeg_encoder::ColorType::Rgb,
+    )?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
 
     use super::*;
     use crate::camera::thermal_test_image;
@@ -329,54 +372,4 @@ mod tests {
         assert_eq!(&jpeg[..2], &[0xff, 0xd8]);
         assert!(jpeg.len() > 500);
     }
-}
-
-/// Signed difference image: blue = colder than the reference, white = same,
-/// red = hotter, clamped to +/- `span_c`.
-pub fn render_dt(img: &ThermalImage, reference: &[u16], span_c: f32) -> Vec<u8> {
-    let n = img.pixel_count();
-    let mut rgb = vec![0u8; n * 3];
-    let span = if span_c.abs() < 0.01 { 1.0 } else { span_c.abs() };
-    for (i, v) in img.values().enumerate() {
-        let Some(&r) = reference.get(i) else {
-            rgb[i * 3..i * 3 + 3].copy_from_slice(&[255, 255, 255]);
-            continue;
-        };
-        let d = (v as f32 - r as f32) * img.calibration.scale;
-        let t = (d / span).clamp(-1.0, 1.0);
-        let colour = if t < 0.0 {
-            let k = 1.0 + t; // 0 at -span, 1 at zero
-            [
-                (255.0 * k) as u8,
-                (255.0 * k) as u8,
-                255,
-            ]
-        } else {
-            [
-                255,
-                (255.0 * (1.0 - t)) as u8,
-                (255.0 * (1.0 - t)) as u8,
-            ]
-        };
-        rgb[i * 3..i * 3 + 3].copy_from_slice(&colour);
-    }
-    rgb
-}
-
-pub fn dt_jpeg(
-    img: &ThermalImage,
-    reference: &[u16],
-    span_c: f32,
-    quality: u8,
-) -> anyhow::Result<Vec<u8>> {
-    let rgb = render_dt(img, reference, span_c);
-    let mut out = Vec::new();
-    let encoder = jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100));
-    encoder.encode(
-        &rgb,
-        img.width as u16,
-        img.height as u16,
-        jpeg_encoder::ColorType::Rgb,
-    )?;
-    Ok(out)
 }

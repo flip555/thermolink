@@ -2,7 +2,7 @@
 name = "thermolink"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.82"
 description = "Modular thermal-camera relay: one web UI, pluggable camera drivers"
 license = "MIT"
 repository = "https://github.com/flip555/thermolink"

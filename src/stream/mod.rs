@@ -29,7 +29,10 @@ impl FrameHub {
     /// Publish one frame. Publishing never blocks.
     pub async fn publish(&self, frame: CameraFrame) {
         let frame = Arc::new(frame);
-        self.latest.write().await.insert(frame.stream, frame.clone());
+        self.latest
+            .write()
+            .await
+            .insert(frame.stream, frame.clone());
         let _ = self.tx.send(frame);
     }
 

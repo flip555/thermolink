@@ -3,8 +3,8 @@
 use anyhow::{bail, Result};
 
 use super::mock::MockDriver;
-use super::qianli::QianliDriver;
 use super::p3::P3Driver;
+use super::qianli::QianliDriver;
 use super::CameraDriver;
 use crate::config::CameraConfig;
 

@@ -7,18 +7,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct Config {
     pub camera: CameraConfig,
     pub server: ServerConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            camera: CameraConfig::default(),
-            server: ServerConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

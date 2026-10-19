@@ -75,12 +75,10 @@ impl ThermalAssembler {
             if self.buf.len() < FRAME_SIZE {
                 break;
             }
-            let raw = Bytes::copy_from_slice(&self.buf[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PAYLOAD_BYTES]);
+            let raw =
+                Bytes::copy_from_slice(&self.buf[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PAYLOAD_BYTES]);
             self.seq += 1;
-            out.push(RawThermalFrame {
-                seq: self.seq,
-                raw,
-            });
+            out.push(RawThermalFrame { seq: self.seq, raw });
             self.buf.advance(FRAME_SIZE);
         }
 

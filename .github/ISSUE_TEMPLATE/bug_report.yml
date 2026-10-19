@@ -1,0 +1,35 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: v0.2.0 or git SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: driver
+    attributes:
+      label: Driver
+      options: [qianli, p3, mock, other]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Redact tokens, hosts and private data.
