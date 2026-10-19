@@ -26,9 +26,9 @@
   .spacer{margin-left:auto}
   .shell{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:12px;padding:12px;height:calc(100dvh - 52px)}
   .stagecol{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
-  .viewer{position:relative;flex:1 1 auto;min-height:0;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
-  .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
-  #vis{object-fit:contain;transform:translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
+  .viewer{position:relative;flex:none;margin:auto;min-height:0;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
+  .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block}
+  #vis{object-fit:cover;transform:translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
   #dtimg{display:none}
   .viewer.thermal #vis{visibility:hidden}
   .viewer.visible #feed{display:none}
@@ -372,6 +372,21 @@ $("authForm").onsubmit = async (e) => {
 $("logout").onclick = async () => { await fetch("/api/logout", { method:"POST" }); location.reload(); };
 
 // ---------- modes / tabs / wipe ----------
+function fitViewer() {
+  const v = $("viewer"), col = v.parentElement;
+  const others = [...col.children].filter(c => c !== v);
+  const gap = 12;
+  const used = others.reduce((a,c) => a + c.getBoundingClientRect().height, 0) + others.length * gap;
+  const pw = col.clientWidth;
+  const ph = col.clientHeight - used;
+  if (pw < 10 || ph < 10) return;
+  const ta = (state.w || 160) / (state.h || 120);
+  let w = pw, h = w / ta;
+  if (h > ph) { h = ph; w = h * ta; }
+  v.style.width = Math.floor(w) + "px";
+  v.style.height = Math.floor(h) + "px";
+}
+
 function applyWipe() {
   const v = $("viewer");
   v.style.setProperty("--split", state.split + "%");
@@ -865,7 +880,7 @@ async function poll() {
       $("source").textContent=d.spec.driver+" · "+(d.spec.model||"");
       const t=d.spec.thermal;
       $("res").textContent=t?`${t.width}×${t.height} · ${t.bit_depth}-bit`:"none";
-      if (t) { state.w=t.width; state.h=t.height; }
+      if (t && (state.w !== t.width || state.h !== t.height)) { state.w=t.width; state.h=t.height; fitViewer(); }
     }
     $("seq").textContent=d.seq??"–";
     $("link").innerHTML=connected?'<span class="ok">connected</span>':'<span class="err">offline</span>';
@@ -907,6 +922,7 @@ $("dtToggle").checked = state.dt;
 setMode(state.mode, false);
 setTab(saved("tab", "display"), false);
 applyWipe();
+fitViewer();
 if (state.dt) refreshDt();
 
 fetch("/api/version").then(r=>r.json()).then(d=>{ $("ver").textContent = d.version || "–"; }).catch(()=>{});
@@ -919,7 +935,7 @@ listSnaps();
 loadPrerecord();
 loadReferences();
 setInterval(() => { if (state.dt) refreshDt(); }, 1000);
-window.addEventListener("resize", drawChart);
+window.addEventListener("resize", () => { fitViewer(); drawChart(); });
 
 </script>
 </body>
