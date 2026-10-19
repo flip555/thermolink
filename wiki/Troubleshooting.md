@@ -27,8 +27,9 @@ Switch to `mock` to prove the UI path.
 
 ## P3 selected but no frames
 
-Expected: the P3 driver is untested and its USB transfer layer is not wired.
-Switch back to `qianli` or `mock`.
+The P3 transport is implemented with `nusb` but still needs hardware validation.
+Check the udev rule/permissions, `dmesg` for USB errors, and the PID (P3 `0x45A2`,
+P1 `0x45C2`). Switch back to `qianli` or `mock` to prove the UI path.
 
 ## Re-analysis visible frame missing / NaN peaks
 

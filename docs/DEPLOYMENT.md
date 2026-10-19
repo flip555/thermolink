@@ -68,11 +68,12 @@ still restarts on crashes.
 - Open the UI, create the admin account, then use **Camera → Camera settings**
   to read/write the camera's IP block if needed.
 
-## USB P3/P1 (untested)
+## USB P3/P1
 
-The P3 driver is protocol-parsed but not wired to USB. When that lands:
+The P3 driver claims USB interfaces 0 and 1 and reads bulk endpoint `0x81`.
+Install the udev rule before starting the relay:
 
-- udev rule: `SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45a2", MODE="0666"` (P3) or `45c2` (P1).
+- `SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45a2", MODE="0666"` (P3) or `45c2` (P1).
 - Use a powered hub if the camera browns out; USB 2.0 bandwidth is sufficient.
 - The driver advertises thermal-only capabilities, so the UI hides all video
   modes automatically.

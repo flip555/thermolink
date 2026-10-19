@@ -66,10 +66,11 @@ is metadata.
 
 ## Driver switch made the feed disappear
 
-Some drivers are intentionally incomplete. `p3` is **untested** and its USB
-transfer layer is not wired: selecting it produces no frames. Switch back to
-`qianli` (or `mock`) in **Camera → Driver**. The capability UI hides video modes
-for thermal-only drivers.
+`p3` uses `nusb` and needs permission to claim interfaces 0/1. If selecting it
+produces no frames, install the udev rule from DEPLOYMENT.md, check `dmesg` for
+USB errors, and confirm the PID (0x45A2 P3 / 0x45C2 P1). Hardware validation is
+still pending for this driver. Switch back to `qianli` or `mock` to prove the
+UI path; the capability UI hides video modes for thermal-only drivers.
 
 ## Camera settings or discovery controls are missing
 

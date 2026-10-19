@@ -22,7 +22,7 @@ first admin account.
   point/box/polygon measurement, ΔT references, A/B comparison, history.
 - Visible: H.264 WebCodecs over HTTPS with MJPEG fallback; Visible, Wipe, PiP,
   Fusion.
-- Drivers: Qianli over TCP, simulated source, P3/P1 USB (parser only, untested).
+- Drivers: Qianli over TCP, simulated source, P3/P1 USB (nusb transport; hardware validation pending).
   Capabilities drive which UI controls appear; drivers hot-swap at runtime.
 - Operations: snapshots, pre-record, per-clip ZIPs, alarms/events, CSV exports,
   self-update/restart.

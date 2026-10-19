@@ -51,19 +51,22 @@ unsupported operations return an error rather than pretending to work.
 - Thermal 160×120, 16-bit raw wrapper; visible H.264 1920×1080.
 - Capabilities: thermal + visible + discovery + network settings + reboot.
 
-### `p3` — P3/P1 USB thermal (untested)
+### `p3` — P3/P1 USB thermal
 
 - VID `0x3474`; P3 PID `0x45A2` (256×192), P1 PID `0x45C2` (160×120).
 - Protocol from [`jvdillon/p3-ir-camera`](https://github.com/jvdillon/p3-ir-camera):
   - 12-byte start marker, pixel buffer `2 * (2*h + 2) * w` bytes.
   - IR rows `0..h`, two metadata rows, thermal rows `h+2..2h+2`.
   - Raw values are 1/64 Kelvin; `scale = 1/64`, `offset = -273.15`.
-- Implemented offline: frame parser, marker validation, calibration, byte-level
-  tests for P3 and P1.
-- **Not wired to USB yet.** `open()` returns a clear error. The driver is listed
-  as “P3/P1 USB thermal (untested)” and advertises thermal-only capabilities.
-  Next step: a native `nusb` session implementing the control transfers and bulk
-  reads, then validation against hardware.
+- USB transport: `nusb` claims interfaces 0 and 1, sets interface 1 to alt 1,
+  sends the vendor control commands, reads bulk endpoint `0x81`, and
+  reassembles the start/pixel/end markers.
+- The session validates `cnt1` between start and end markers, resynchronises
+  after corrupt bytes, and queues any extra frames from a read.
+- Shutter and high/low-gain commands are implemented on the session but not yet
+  exposed by the server control surface.
+- Tested offline: frame parser, marker validation, calibration and split-frame
+  assembler tests for P3 and P1. **Hardware validation is still pending.**
 
 ### `mock` — simulator
 

@@ -10,8 +10,8 @@ resolution, packet layout, or network dialect. It asks a driver for a
 
 **Status:** the single-camera relay is feature-complete: live thermal and visible
 feeds, measurement, alarms, snapshots, pre-record, roles, HTTPS, i18n, and
-runtime driver hot-swap. A P3/P1 USB driver is protocol-parsed and unit-tested
-but **untested against hardware** and not yet wired to libusb/nusb.
+runtime driver hot-swap. A P3/P1 USB driver uses `nusb` for transport, with the
+protocol and calibration ported; hardware validation is still pending.
 
 ## A look at it
 
@@ -27,7 +27,7 @@ but **untested against hardware** and not yet wired to libusb/nusb.
 - **Visible:** H.264 Annex-B → WebCodecs in the browser over HTTPS, with MJPEG
   transcoding as the fallback; Visible, Wipe, PiP and Fusion modes.
 - **Drivers:** Qianli SuperCam over TCP, simulated source, and an offline
-  P3/P1 USB driver entry (untested). Drivers advertise capabilities; the GUI
+  P3/P1 USB driver entry (nusb; hardware validation pending). Drivers advertise capabilities; the GUI
   hides controls a camera cannot use, and drivers can be switched at runtime.
 - **Operations:** snapshots (JPEG/raw/JSON + saved visible frame), pre-record
   ring buffer, per-clip ZIPs, alarm events, CSV exports, self-update/restart,
@@ -66,7 +66,7 @@ generated on first start). The first visitor creates the admin account.
 | id | transport | thermal | visible | notes |
 |----|-----------|---------|---------|-------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full handshake, settings, reboot, discovery |
-| `p3` | USB (not wired) | 256×192 / 160×120 | — | protocol parser + calibration ported; **untested**, needs hardware + nusb |
+| `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser + calibration; hardware validation pending |
 | `mock` | in-process | 160×120 | — | simulator for development and tests |
 
 The GUI **Camera → Driver** selector persists `camera.json` and hot-swaps the

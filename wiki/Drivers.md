@@ -3,7 +3,7 @@
 | id | transport | thermal | visible | status |
 |----|-----------|---------|---------|--------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full |
-| `p3` | USB | 256×192 / 160×120 | — | parser + calibration, **untested**, USB not wired |
+| `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser; hardware validation pending |
 | `mock` | in-process | 160×120 | — | simulator |
 
 A driver owns transport, framing, pixels and calibration. The server consumes

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 — 2026-10-19
+
+- P3/P1 USB transport using `nusb`: interface claim, vendor control init,
+  alt-setting 1, bulk `0x81` reads, start/end marker + counter validation,
+  resynchronisation and frame queueing.
+- Shutter and high/low-gain commands are implemented on the session; the server
+  control surface does not expose them yet.
+- Offline tests cover the split-frame assembler and counter mismatch. Hardware
+  validation against a real P3/P1 is still pending.
+
 ## 0.3.1 — 2026-10-19
 
 - Sync the `Cargo.lock` package version after the 0.3.0 tag.
