@@ -2,154 +2,111 @@
 
 One web UI for thermal cameras, with the camera itself behind a driver boundary.
 
-This is the Rust port of [`qianli-supercam`](https://github.com/flip555/qianli-supercam).
+ThermoLink is the Rust port of [`qianli-supercam`](https://github.com/flip555/qianli-supercam).
 The Python project proved the protocol and the interface; ThermoLink keeps the
 features and removes the coupling — the web server never learns a camera's
 resolution, packet layout, or network dialect. It asks a driver for a
 `CameraSpec` and consumes `CameraFrame`s.
 
-**Status: milestone 2.** The driver boundary, Qianli handshake, thermal
-extraction, palette/band renderer, HTTP server and a working live UI are in
-place. A simulated driver lets you run the whole app with no hardware.
+**Status:** the single-camera relay is feature-complete: live thermal and visible
+feeds, measurement, alarms, snapshots, pre-record, roles, HTTPS, i18n, and
+runtime driver hot-swap. A P3/P1 USB driver is protocol-parsed and unit-tested
+but **untested against hardware** and not yet wired to libusb/nusb.
 
-## Layout
+## Features
 
-```
-thermolink/
-├── Cargo.toml
-├── src/
-│   ├── main.rs              # CLI: drivers / probe / stream / config
-│   ├── lib.rs
-│   ├── config.rs            # driver-agnostic configuration
-│   ├── camera/
-│   │   ├── mod.rs           # CameraDriver, CameraSession, CameraSpec, frames
-│   │   ├── registry.rs      # driver id -> implementation
-│   │   ├── mock.rs          # simulated 160x120 source (demo/test)
-│   │   └── qianli/
-│   │       ├── mod.rs       # handshake + session read loop
-│   │       ├── protocol.rs  # byte-exact packets (unit-tested vs capture)
-│   │       └── thermal.rs   # 39448-byte wrapper -> 160x120 u16 frame
-│   └── stream/
-│       └── mod.rs           # FrameHub: latest-frame + broadcast fan-out
-└── docs/
-    └── PROTOCOL.md          # reverse-engineered Qianli protocol notes
-```
+- **Thermal:** palette rendering, clip/span bands, isotherm bands + profiles,
+  hot/cold peaks, temperature history, point/box/polygon measurement, ΔT against
+  a reference, A/B reference comparison.
+- **Visible:** H.264 Annex-B → WebCodecs in the browser over HTTPS, with MJPEG
+  transcoding as the fallback; Visible, Wipe, PiP and Fusion modes.
+- **Drivers:** Qianli SuperCam over TCP, simulated source, and an offline
+  P3/P1 USB driver entry (untested). Drivers advertise capabilities; the GUI
+  hides controls a camera cannot use, and drivers can be switched at runtime.
+- **Operations:** snapshots (JPEG/raw/JSON), pre-record ring buffer, per-clip
+  ZIPs, alarm events, CSV exports, self-update/restart, health/uptime.
+- **Access:** Argon2 account, admin/guest roles with per-capability permissions,
+  persisted sessions, Bearer and query tokens, self-signed HTTPS on `:8443`.
+- **UI:** nine languages, RTL Arabic, fullscreen, responsive layout.
 
-The rule that keeps it modular: **nothing under `src/server/` (next milestone)
-may import `camera::qianli`.** It imports `camera` only. Adding a camera family
-means adding `src/camera/<family>/` and one arm in `registry.rs`.
-
-## Driver contract
-
-```rust
-#[async_trait]
-pub trait CameraDriver: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn spec(&self) -> CameraSpec;                 // resolution, bit depth, calibration
-    async fn open(&self) -> Result<Box<dyn CameraSession>>;
-}
-
-#[async_trait]
-pub trait CameraSession: Send {
-    fn spec(&self) -> &CameraSpec;
-    async fn next_frame(&mut self) -> Result<CameraFrame>;
-    async fn close(&mut self);
-}
-```
-
-Frames are either `FramePayload::Video(Bytes)` (opaque, forwarded untouched) or
-`FramePayload::Thermal(ThermalImage)` (raw `u16` samples plus calibration, so
-temperature math is driver-neutral).
-
-## Run
+## Quick start
 
 ```bash
 cargo build --release
 
-# what can this binary talk to?
-./target/release/thermolink drivers
-
-# handshake + 4 seconds of frames; prints the spec and thermal min/max
-./target/release/thermolink probe --host 192.168.1.64
-
-# the camera loop with reconnect/backoff and frame logging
-RUST_LOG=thermolink=info ./target/release/thermolink stream --host 192.168.1.64
-
-# the whole app against the simulator — no camera required
+# run the whole app against the simulator — no camera required
 ./target/release/thermolink serve --demo --bind 0.0.0.0:8099
 
-# the whole app against a real camera
-./target/release/thermolink serve --host 192.168.1.64 --bind 0.0.0.0:8099
+# real Qianli camera
+RUST_LOG=thermolink=info ./target/release/thermolink serve \
+  --host 192.168.1.64 --bind 0.0.0.0:8099
+
+# inspect a camera without starting the server
+./target/release/thermolink probe --host 192.168.1.64
 ```
 
-Open `http://localhost:8099`. The UI is a live MJPEG view with min/mean/max,
-the three hottest spots, palette switching, and independent clip and span bands
-(clip hides temperatures as white; span maps the palette onto a chosen range).
-`Save JPEG` downloads the current render.
+Open `http://<host>:8099` (HTTP) or `https://<host>:8443` (self-signed TLS,
+generated on first start). The first visitor creates the admin account.
 
-The UI is translated into English, Spanish, French, German, Portuguese, Chinese,
-Japanese, Russian and Arabic. The picker sits in the header; the choice is kept
-in `localStorage`, Arabic switches the page to right-to-left, and every key falls
-back to English. Language files live in `web/i18n/` and are embedded in the
-binary, so `/i18n/<lang>.json` works without a sidecar directory.
+`serve` flags: `--driver`, `--host`, `--control-port`, `--media-port`, `--bind`,
+`--demo`, `--data-dir`.
 
-### HTTP surface
+## Drivers
 
-| Path | Purpose |
-|------|---------|
-| `/` | web UI |
-| `/i18n/<lang>.json` | UI translations (public; `en`, `es`, `fr`, `de`, `pt`, `zh`, `ja`, `ru`, `ar`) |
-| `/api/spec` | driver capabilities (resolution, bit depth, calibration) |
-| `/api/thermal.json` | stats, peaks, display settings, connection state |
-| `/api/thermal.jpg` | one rendered frame |
-| `/api/thermal.mjpg` | multipart MJPEG at 10 fps |
-| `/api/display` | GET/POST palette + clip/span |
-| `/api/raw.h264` | raw visible stream passthrough |
-| `/api/health` | liveness + frame sequence |
-| `/api/version` | running build and update repository |
-| `/api/update` | GET: latest release; POST: install its binary (admin) |
-| `/api/restart` | exec the relay in place (admin) |
+| id | transport | thermal | visible | notes |
+|----|-----------|---------|---------|-------|
+| `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full handshake, settings, reboot, discovery |
+| `p3` | USB (not wired) | 256×192 / 160×120 | — | protocol parser + calibration ported; **untested**, needs hardware + nusb |
+| `mock` | in-process | 160×120 | — | simulator for development and tests |
 
-`probe` is the honest test: if no thermal frame arrives it exits non-zero. A
-polite handshake alone does not mean the camera accepted the session.
+The GUI **Camera → Driver** selector persists `camera.json` and hot-swaps the
+driver without restarting the relay. Capabilities are advertised in
+`/api/spec`; the UI hides modes and controls that do not apply.
 
-## Qianli SuperCam (LC-AD11 / TB-03 v2)
+## Data directory
 
-* Control port **3001**, media port **3000**, both TCP.
-* The camera issues a **fresh 4-byte flag per session** in the probe reply
-  (bytes 28..30 are `01 00`, flag at 48..52). START and CTRL must echo it.
-  A stale flag yields a perfectly polite handshake and a stream that closes
-  after 1–3 s with zero frames.
-* Thermal is a **160×120, 16-bit LE** image: 38400 bytes at offset 88 of each
-  fixed **39448-byte** wrapper whose `RAW` marker sits at offset 48.
-* Keepalives (type `0x05`) go on the **probe** sockets every 10 s, not on the
-  streaming sockets.
+Everything stateful lives in `--data-dir` (default `thermolink-data/`):
 
-Full details, including the settings ritual and the notes about port 23, are in
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+```
+auth.json  sessions.json  calibration.json  display.json  align.json
+regions.json  alarms.json  references.json  reference-active.json
+isotherm.json  camera.json  prerecord.json  notifications.json
+snapshots/  captures/  tls-cert.pem  tls-key.pem
+```
 
-### Updating a deployment
+Back up the directory to preserve accounts, measurements, references and
+recordings. Sessions are persisted, so a relay restart does not sign you out.
 
-`GET /api/update` asks GitHub for the latest release of `flip555/thermolink`
-(override with `THERMOLINK_REPO`). `POST /api/update` downloads the asset whose
-name matches this OS and architecture, checks it is a real executable, copies
-the current binary to `thermolink.bak-<timestamp>` and renames the new one into
-place. The running process keeps the old image until `POST /api/restart`, which
-execs the new binary with the same arguments and PID; in-memory sessions are
-lost, so everyone signs in again. Both endpoints are admin-only.
+## Documentation
 
-## Roadmap
+- [Architecture](docs/ARCHITECTURE.md)
+- [Drivers and capabilities](docs/DRIVERS.md)
+- [HTTP API](docs/API.md)
+- [Security](docs/SECURITY.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Qianli protocol notes](docs/PROTOCOL.md)
 
-1. **Visible + thermal composition** — WebCodecs H.264 in the browser, Wipe /
-   PiP / Fusion modes, alignment controls.
-2. **Measurement** — regions (point / rect / polygon), reference and ΔT image,
-   CSV history, snapshot store with raw-frame re-analysis.
-3. **Settings + calibration** — two-point fit, persisted per driver, plus the
-   camera's own 376-byte network block behind a driver capability.
-4. **Alarms, history, auth** — port the remaining Python modules.
+A ready-to-publish GitHub wiki lives in [`wiki/`](wiki/Home.md).
 
-## Credits
+## Security notes
 
-Protocol knowledge comes from the reverse-engineering work in
-`qianli-supercam` (`docs/PROTOCOL.md`, `supercam/protocol.py`). No vendor code
-or documentation is used or redistributed.
+HTTPS uses a self-signed certificate; the browser warning is expected. The
+session cookie is deliberately **not** marked `Secure` while the certificate is
+self-signed (some browsers drop it on cert-error origins); the page also stores
+the session token and sends it as `Authorization: Bearer`. See
+[Security](docs/SECURITY.md) before exposing the relay to an untrusted network.
+
+## Tests
+
+```bash
+cargo test --release --lib
+```
+
+The suite covers the Qianli protocol/thermal extraction, render paths, auth,
+persistence, update logic, the P3 frame parser, and server helpers. The Qianli
+integration test needs a local mock handshake server and runs in the same suite.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
