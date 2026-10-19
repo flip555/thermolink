@@ -415,7 +415,7 @@ window.fetch = (input, init = {}) => {
   return nativeFetch(input, init);
 };
 function withToken(url) {
-  let token = null; try { token = localStorage.getItem(["thermo","link","token"].join(".")); } catch (e) {}
+  let token = null; try { token = localStorage.getItem(["thermolink","token"].join(".")); } catch (e) {}
   return token ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) : url;
 }
 

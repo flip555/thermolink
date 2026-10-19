@@ -1158,8 +1158,13 @@ async fn update_account(
         .into_response())
 }
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("../../web/index.html"))
+async fn index() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(include_str!("../../web/index.html")))
+        .unwrap()
 }
 
 /// Translations are embedded in the binary so a deployment is still a single file.
