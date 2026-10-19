@@ -1,6 +1,7 @@
 //! HTTP surface. Deliberately imports `camera` and `render`, never a driver.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use axum::body::Body;
-use axum::extract::{Path as AxumPath, Query, Request, State};
+use axum::extract::{ConnectInfo, Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
@@ -153,6 +154,7 @@ pub struct AppState {
     pub notify: RwLock<NotifyConfig>,
     pub auth: RwLock<Option<AuthFile>>,
     sessions: RwLock<HashMap<String, Instant>>,
+    setup_token: String,
     pub calibration: RwLock<Calibration>,
     pub connected: Arc<AtomicBool>,
     pub source: String,
@@ -224,6 +226,13 @@ impl AppState {
             .ok()
             .and_then(|t| serde_json::from_str::<Vec<Reference>>(&t).ok())
             .unwrap_or_default();
+        let mut token_bytes = [0u8; 8];
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut token_bytes);
+        let setup_token: String = token_bytes.iter().map(|b| format!("{b:02x}")).collect();
+        if auth.is_none() {
+            tracing::info!(setup_token = %setup_token, "first-run setup token for non-local clients");
+        }
         Self {
             spec,
             hub,
@@ -232,6 +241,7 @@ impl AppState {
             notify: RwLock::new(notify),
             auth: RwLock::new(auth),
             sessions: RwLock::new(HashMap::new()),
+            setup_token,
             calibration: RwLock::new(calibration),
             connected,
             source,
@@ -488,10 +498,10 @@ async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> R
     if public_path(req.uri().path()) {
         return next.run(req).await;
     }
-    // Auth is opt-in: until an account exists the app is open, matching the
-    // previous behaviour. Setting a password turns the gate on.
+    // Closed by default: with no account only the setup/login surface is
+    // reachable. This prevents an unauthenticated visitor from claiming admin.
     if st.auth.read().await.is_none() {
-        return next.run(req).await;
+        return (StatusCode::SERVICE_UNAVAILABLE, "setup required").into_response();
     }
     if let Some(token) = session_token(req.headers()) {
         let valid = st
@@ -509,9 +519,10 @@ async fn auth_mw(State(st): State<Arc<AppState>>, req: Request, next: Next) -> R
 
 async fn whoami(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<serde_json::Value> {
     let auth = st.auth.read().await.clone();
+    let setup_required = auth.is_none();
     let configured = auth.is_some();
-    let authenticated = if !configured {
-        true
+    let authenticated = if setup_required {
+        false
     } else {
         match session_token(&headers) {
             Some(token) => st
@@ -526,7 +537,7 @@ async fn whoami(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<ser
     Json(json!({
         "authenticated": authenticated,
         "configured": configured,
-        "setup_required": false,
+        "setup_required": setup_required,
         "user": auth.map(|a| a.username),
     }))
 }
@@ -563,10 +574,23 @@ fn session_response(token: String) -> Response {
 
 async fn setup(
     State(st): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(c): Json<Credentials>,
 ) -> Result<Response, (StatusCode, String)> {
     if st.auth.read().await.is_some() {
         return Err((StatusCode::CONFLICT, "already set up".into()));
+    }
+    let local = addr.ip().is_loopback();
+    let token_ok = headers
+        .get("x-setup-token")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == st.setup_token);
+    if !local && !token_ok {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "setup is limited to the local console; send X-Setup-Token for remote setup".into(),
+        ));
     }
     let username = c.username.trim().to_string();
     if username.len() < 2 {
@@ -1879,7 +1903,7 @@ fn inside(region: &Region, x: i32, y: i32) -> bool {
                 let (xj, yj) = (pts[j][0], pts[j][1]);
                 if (yi > y) != (yj > y)
                     && (x as f32)
-                        < (xj - xi) as f32 * (y - yi) as f32 / (yj - yi).max(1) as f32
+                        < (xj - xi) as f32 * (y - yi) as f32 / (yj - yi) as f32
                             + xi as f32
                 {
                     inside = !inside;

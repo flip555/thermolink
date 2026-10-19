@@ -27,11 +27,16 @@ pub async fn reboot(host: Ipv4Addr) -> Result<Value> {
         s.write_all(&opts).await?;
     }
 
-    s.write_all(b"root\r\n").await?;
-    let prompt = read_for(&mut s, Duration::from_secs(4)).await;
+    let user = std::env::var("CAMERA_TELNET_USER").unwrap_or_else(|_| "root".into());
+    let pass = std::env::var("CAMERA_TELNET_PASS").unwrap_or_default();
+    s.write_all(format!("{user}\r\n").as_bytes()).await?;
+    let mut prompt = read_for(&mut s, Duration::from_secs(4)).await;
     if contains(&prompt, b"assword") {
-        s.write_all(b"\r\n").await?;
-        let _ = read_for(&mut s, Duration::from_secs(5)).await;
+        s.write_all(format!("{pass}\r\n").as_bytes()).await?;
+        prompt = read_for(&mut s, Duration::from_secs(5)).await;
+    }
+    if !contains(&prompt, b"#") && !contains(&prompt, b"$") {
+        anyhow::bail!("login failed: no shell prompt");
     }
 
     s.write_all(b"sync; reboot -f\n").await?;

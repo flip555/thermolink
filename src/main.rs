@@ -164,7 +164,11 @@ async fn serve(
         .await
         .with_context(|| format!("binding {bind}"))?;
     info!(%bind, "ThermoLink web UI ready");
-    axum::serve(listener, server::router(state)).await?;
+    axum::serve(
+        listener,
+        server::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

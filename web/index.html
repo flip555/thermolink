@@ -328,14 +328,25 @@ function fmt(c) {
 }
 
 // ---------- auth (optional: open until a password is set) ----------
+let authMode = "login";
 async function initAuth() {
   try {
     const d = await (await fetch("/api/whoami")).json();
-    if (!d.configured || d.authenticated) {
+    if (d.authenticated) {
       $("auth").classList.remove("show");
       $("logout").style.display = d.configured ? "" : "none";
       return;
     }
+    if (d.setup_required) {
+      authMode = "setup";
+      $("authTitle").textContent = "Create admin account";
+      $("authHint").textContent = "First run: set the admin username and password (6+ characters).";
+      $("authSubmit").textContent = "Create account";
+      $("authPass").autocomplete = "new-password";
+      $("auth").classList.add("show");
+      return;
+    }
+    authMode = "login";
     $("authTitle").textContent = "Sign in";
     $("authHint").textContent = "Enter your credentials.";
     $("authSubmit").textContent = "Sign in";
@@ -348,7 +359,8 @@ async function initAuth() {
 $("authForm").onsubmit = async (e) => {
   e.preventDefault();
   const body = { username: $("authUser").value, password: $("authPass").value };
-  const r = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const url = authMode === "setup" ? "/api/setup" : "/api/login";
+  const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
   if (r.ok) location.reload();
   else $("authErr").textContent = await r.text();
 };
@@ -364,6 +376,9 @@ function applyWipe() {
 }
 function setMode(mode, persist = true) {
   state.mode = mode;
+  if (state.dt && (mode === "wipe" || mode === "pip" || mode === "fusion")) {
+    state.dt = false; save("dt", "0"); $("dtToggle").checked = false;
+  }
   if (persist) save("mode", mode);
   for (const b of $("modes").children) b.classList.toggle("active", b.dataset.mode === mode);
   applyWipe();
@@ -569,6 +584,9 @@ function drawRegions() {
     if (s.kind === "point") {
       el = document.createElementNS("http://www.w3.org/2000/svg","circle");
       el.setAttribute("cx",s.x0); el.setAttribute("cy",s.y0); el.setAttribute("r","2");
+    } else if (s.kind === "poly" && s.pts) {
+      el = document.createElementNS("http://www.w3.org/2000/svg","polygon");
+      el.setAttribute("points", s.pts.map(p => `${p[0]},${p[1]}`).join(" "));
     } else {
       el = document.createElementNS("http://www.w3.org/2000/svg","rect");
       el.setAttribute("x",s.x0); el.setAttribute("y",s.y0);
@@ -598,7 +616,8 @@ function drawRegions() {
 async function loadRegions() {
   try {
     const d = await (await fetch("/api/regions")).json();
-    state.regions = d.stats || [];
+    const byId = new Map((d.regions || []).map(r => [r.id, r]));
+    state.regions = (d.stats || []).map(s => Object.assign({}, s, { pts: (byId.get(s.id) || {}).pts }));
     drawRegions();
     const ref = (d.regions || []).find(r => r.ref);
     $("regions").innerHTML = state.regions.length
@@ -827,7 +846,9 @@ function drawChart() {
 // ---------- poll ----------
 async function poll() {
   try {
-    const d = await (await fetch("/api/thermal.json",{cache:"no-store"})).json();
+    const res = await fetch("/api/thermal.json",{cache:"no-store"});
+    if (res.status === 401) { initAuth(); return; }
+    const d = await res.json();
     const connected=!!d.connected, ready=!!d.ready;
     $("dot").className="dot"+(connected?" on":"");
     $("waiting").classList.toggle("show", !ready);
@@ -848,6 +869,12 @@ async function poll() {
     if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized=true; }
     if (d.calibration && document.activeElement!==$("calScale")) { $("calScale").value=d.calibration.scale; $("calOffset").value=d.calibration.offset; }
     if (d.align) applyAlign(d.align);
+    if (d.has_reference === false) {
+      $("dtToggle").disabled = true;
+      if (state.dt) { state.dt = false; save("dt", "0"); $("dtToggle").checked = false; applyWipe(); }
+    } else {
+      $("dtToggle").disabled = false;
+    }
     if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = "/api/thermal.mjpg?t=" + Date.now(); }
     if (d.video && !state.visStarted) { state.visStarted = true; $("vis").src = "/api/video.mjpg?t=" + Date.now(); }
     if (!ready || !d.stats) return;
