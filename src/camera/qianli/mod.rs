@@ -16,6 +16,7 @@ pub mod thermal;
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -23,6 +24,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio::time::{interval, sleep, timeout, MissedTickBehavior};
 
 use super::{
@@ -42,6 +44,12 @@ pub struct QianliDriver {
     control_port: u16,
     media_port: u16,
     calibration: Calibration,
+    /// Last configuration block the camera reported, with its arrival time.
+    /// The handshake itself carries one, so normal reads cost nothing.
+    settings: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
+    /// The live control socket that answered the settings probe. Probing it
+    /// avoids opening a second session alongside the streaming one.
+    settings_link: Arc<Mutex<Option<TcpStream>>>,
 }
 
 impl QianliDriver {
@@ -63,6 +71,8 @@ impl QianliDriver {
             control_port: cfg.control_port,
             media_port: cfg.media_port,
             calibration,
+            settings: Arc::new(Mutex::new(None)),
+            settings_link: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -101,28 +111,48 @@ impl CameraDriver for QianliDriver {
     }
 
     async fn read_settings(&self) -> Result<Option<serde_json::Value>> {
-        let mut s = connect(self.host, self.control_port).await?;
-        s.write_all(&p::register(0x6c, 0)).await?;
-        let mut buf: Vec<u8> = Vec::with_capacity(512);
-        let mut chunk = [0u8; 512];
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            match timeout(left, s.read(&mut chunk)).await {
-                Ok(Ok(0)) | Err(_) => break,
-                Ok(Ok(n)) => {
-                    buf.extend_from_slice(&chunk[..n]);
-                    if buf.len() >= 464 {
-                        break;
-                    }
+        // A live control socket already in config mode answers the probe
+        // without opening a second session against a streaming camera.
+        let link = self.settings_link.lock().await.take();
+        if let Some(mut s) = link {
+            match collect_settings(&mut s, true, Duration::from_secs(1)).await {
+                Ok(Some(v)) => {
+                    *self.settings.lock().await = Some((Instant::now(), v.clone()));
+                    *self.settings_link.lock().await = Some(s);
+                    return Ok(Some(v));
                 }
-                Ok(Err(_)) => break,
+                Ok(None) => {
+                    *self.settings_link.lock().await = Some(s);
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "live settings probe failed; trying a fresh connection");
+                }
             }
         }
-        Ok(settings::parse(&buf))
+
+        // No live socket (or it died): a fresh connection is the old
+        // behaviour and stays as the fallback.
+        if let Ok(mut s) = connect(self.host, self.control_port).await {
+            match collect_settings(&mut s, true, Duration::from_secs(2)).await {
+                Ok(Some(v)) => {
+                    *self.settings.lock().await = Some((Instant::now(), v.clone()));
+                    *self.settings_link.lock().await = Some(s);
+                    return Ok(Some(v));
+                }
+                Ok(None) => {}
+                Err(e) => tracing::debug!(error = %e, "settings probe failed"),
+            }
+        } else {
+            tracing::debug!("settings connection failed");
+        }
+
+        // Last known good values keep the UI useful while the camera is busy.
+        Ok(self
+            .settings
+            .lock()
+            .await
+            .as_ref()
+            .map(|(_, v)| v.clone()))
     }
 
     async fn open(&self) -> Result<Box<dyn CameraSession>> {
@@ -205,6 +235,19 @@ impl CameraDriver for QianliDriver {
         let probe1 = socks
             .remove(&handshake::PROBE_THERMAL)
             .context("thermal probe socket missing")?;
+        // The 0x6c probe is part of the captured handshake, so the camera's
+        // configuration block is usually already waiting on this socket.
+        let mut config = socks
+            .remove(&handshake::CONFIG)
+            .context("config control socket missing")?;
+        match collect_settings(&mut config, false, Duration::from_millis(400)).await {
+            Ok(Some(v)) => {
+                *self.settings.lock().await = Some((Instant::now(), v));
+            }
+            Ok(None) => tracing::debug!("handshake carried no settings reply"),
+            Err(e) => tracing::debug!(error = %e, "reading handshake settings reply failed"),
+        }
+        *self.settings_link.lock().await = Some(config);
 
         let mut keepalive = interval(KEEPALIVE_EVERY);
         keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -375,6 +418,46 @@ impl CameraSession for QianliSession {
     }
 }
 
+/// Read one configuration block, optionally asking for it first.
+///
+/// A reply is an 88-byte echo followed by the 376-byte block; the parser also
+/// accepts a bare block. Unrelated traffic on the same socket is ignored until
+/// the deadline, so keepalives cannot produce a false parse.
+async fn collect_settings(
+    s: &mut TcpStream,
+    probe: bool,
+    budget: Duration,
+) -> Result<Option<serde_json::Value>> {
+    if probe {
+        s.write_all(&p::register(0x6c, 0)).await?;
+    }
+    let mut buf: Vec<u8> = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match timeout(left, s.read(&mut chunk)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(v) = settings::parse(&buf) {
+                    return Ok(Some(v));
+                }
+                if buf.len() > 8192 {
+                    let keep = buf.split_off(buf.len() - 1024);
+                    buf = keep;
+                }
+            }
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => break,
+        }
+    }
+    Ok(None)
+}
+
 async fn connect(host: Ipv4Addr, port: u16) -> Result<TcpStream> {
     let s = timeout(Duration::from_secs(3), TcpStream::connect((host, port)))
         .await
@@ -454,4 +537,97 @@ async fn read_flag(s: &mut TcpStream) -> Result<[u8; 4]> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::CameraConfig;
+    use tokio::net::TcpListener;
+
+    /// An 88-byte echo followed by the camera's 376-byte config block.
+    fn config_block(name: &str, ip: &str) -> Vec<u8> {
+        let mut blob = vec![0u8; 88 + 376];
+        blob[88..88 + name.len()].copy_from_slice(name.as_bytes());
+        blob[112..112 + ip.len()].copy_from_slice(ip.as_bytes());
+        blob
+    }
+
+    fn driver(port: u16) -> QianliDriver {
+        let cfg = CameraConfig {
+            driver: "qianli".into(),
+            host: "127.0.0.1".into(),
+            control_port: port,
+            media_port: port,
+            ..Default::default()
+        };
+        QianliDriver::from_config(&cfg).expect("driver")
+    }
+
+    #[tokio::test]
+    async fn settings_probe_reuses_the_live_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            // Two reads over one accepted connection: the second must reuse it.
+            for _ in 0..2 {
+                let mut probe = [0u8; 88];
+                s.read_exact(&mut probe).await.unwrap();
+                let cmd = u64::from_le_bytes(probe[68..76].try_into().unwrap());
+                assert_eq!(cmd, 0x6c, "expected the settings probe");
+                s.write_all(&config_block("SuperCam", "192.168.1.64"))
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let d = driver(port);
+        let first = d.read_settings().await.unwrap().expect("first reply");
+        assert_eq!(first["name"], "SuperCam");
+        assert_eq!(first["reply_offset"], 88);
+        let second = d.read_settings().await.unwrap().expect("cached/reused");
+        assert_eq!(second["ip"], "192.168.1.64");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn handshake_reply_is_parsed_without_a_probe() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            // No request: this is the reply the captured handshake already asked for.
+            s.write_all(&config_block("SuperCam", "10.0.0.7"))
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let v = collect_settings(&mut s, false, Duration::from_millis(500))
+            .await
+            .unwrap()
+            .expect("handshake reply");
+        assert_eq!(v["ip"], "10.0.0.7");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn settings_probe_ignores_unrelated_traffic() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut probe = [0u8; 88];
+            s.read_exact(&mut probe).await.unwrap();
+            s.write_all(&[0u8; 7]).await.unwrap();
+            s.write_all(&config_block("SuperCam", "10.1.2.3")).await.unwrap();
+        });
+
+        let d = driver(port);
+        let v = d.read_settings().await.unwrap().expect("reply after junk");
+        assert_eq!(v["ip"], "10.1.2.3");
+        server.await.unwrap();
+    }
 }

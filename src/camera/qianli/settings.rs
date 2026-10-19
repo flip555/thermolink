@@ -34,17 +34,35 @@ pub fn parse(blob: &[u8]) -> Option<Value> {
 }
 
 fn find_block(blob: &[u8]) -> Option<(usize, &[u8])> {
+    // The documented layout first: an 88-byte echo, or a bare block.
     for offset in [ECHO_LEN, 0] {
-        if blob.len() < offset + BLOCK_LEN {
-            continue;
+        if let Some(block) = block_at(blob, offset) {
+            return Some((offset, block));
         }
-        let name = &blob[offset..offset + 24];
-        let ip = &blob[offset + 24..offset + 40];
-        if dotted_ip(ip) && name.iter().any(|b| b.is_ascii_graphic()) {
-            return Some((offset, &blob[offset..offset + BLOCK_LEN]));
+    }
+    // A reused control socket can carry unrelated bytes before the reply.
+    // Resynchronise on the block's own shape rather than giving up.
+    if blob.len() >= BLOCK_LEN {
+        for offset in 0..=blob.len() - BLOCK_LEN {
+            if let Some(block) = block_at(blob, offset) {
+                return Some((offset, block));
+            }
         }
     }
     None
+}
+
+fn block_at(blob: &[u8], offset: usize) -> Option<&[u8]> {
+    if blob.len() < offset + BLOCK_LEN {
+        return None;
+    }
+    let name = &blob[offset..offset + 24];
+    let ip = &blob[offset + 24..offset + 40];
+    if dotted_ip(ip) && name.iter().any(|b| b.is_ascii_graphic()) {
+        Some(&blob[offset..offset + BLOCK_LEN])
+    } else {
+        None
+    }
 }
 
 fn dotted_ip(bytes: &[u8]) -> bool {

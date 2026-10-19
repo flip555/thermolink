@@ -46,6 +46,9 @@ pub const STEPS: &[Step] = &[
 ];
 
 /// Probe keys for value 0 / value 1, and the streaming sockets.
+/// Control socket that receives the 0x6c settings probe.
+pub const CONFIG: u16 = 61878;
+
 pub const PROBE_VISIBLE: u16 = 61870;
 pub const PROBE_THERMAL: u16 = 61871;
 pub const VIDEO_VISIBLE: u16 = 61872;
