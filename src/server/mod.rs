@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwap;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Extension, Path as AxumPath, Query, Request, State};
@@ -888,9 +889,8 @@ fn verify_hash(password: &str, stored: &str) -> bool {
 }
 
 fn hash_password(password: &str) -> Result<String, (StatusCode, String)> {
-    let salt = SaltString::generate(&mut OsRng);
     Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .to_string())
 }
