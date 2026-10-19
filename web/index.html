@@ -269,6 +269,9 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+// These must exist before `state` is built: its initialiser calls saved().
+const saved = (k, d) => { try { const v = localStorage.getItem("thermolink." + k); return v === null ? d : v; } catch(e) { return d; } };
+const save = (k, v) => { try { localStorage.setItem("thermolink." + k, v); } catch(e) {} };
 const state = {
   unit: "C", display: null, initialized: false, palettes: [], mode: "thermal",
   w: 160, h: 120, regions: [], alarms: [], history: [], dismissed: null, dt: false,
@@ -277,8 +280,6 @@ const state = {
   align: {x:0,y:0,scale:1,rot:0,flip_h:false,flip_v:false}
 };
 
-const saved = (k, d) => { try { const v = localStorage.getItem("thermolink." + k); return v === null ? d : v; } catch(e) { return d; } };
-const save = (k, v) => { try { localStorage.setItem("thermolink." + k, v); } catch(e) {} };
 state.unit = saved("unit", "C");
 state.mode = saved("mode", "thermal");
 state.anchor = saved("anchor", "left");
