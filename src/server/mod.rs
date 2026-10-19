@@ -164,6 +164,7 @@ pub struct AppState {
     pub calibration: RwLock<Calibration>,
     pub connected: Arc<AtomicBool>,
     pub source: String,
+    started: Instant,
     pub video: Option<VideoTranscoder>,
     thermal_cache: Mutex<Option<(u64, String, Bytes)>>,
     pub driver: Arc<dyn CameraDriver>,
@@ -261,6 +262,7 @@ impl AppState {
             calibration: RwLock::new(calibration),
             connected,
             source,
+            started: Instant::now(),
             video,
             thermal_cache: Mutex::new(None),
             driver,
@@ -711,6 +713,7 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(json!({
         "ok": true,
         "source": st.source,
+        "uptime_s": st.started.elapsed().as_secs(),
         "connected": st.connected(),
         "ready": latest.is_some(),
         "video": st.video.as_ref().is_some_and(|v| v.alive()),
@@ -1471,13 +1474,25 @@ async fn snapshot(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     std::fs::write(dir.join(format!("{name}.raw")), &img.raw)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let regions = st.regions.read().await.clone();
+    let mut rstats: Vec<serde_json::Value> = regions.iter().filter_map(|r| region_stats(&img, r)).collect();
+    attach_deltas(&img, &regions, &mut rstats);
+    let reference_at = {
+        let active = st.active_ref.read().await.clone();
+        match active {
+            Some(id) => st.references.read().await.iter().find(|r| r.id == id).map(|r| r.at),
+            None => None,
+        }
+    };
     let meta = json!({
         "name": name,
         "at": now.as_secs(),
         "stats": stats,
         "calibration": img.calibration,
         "display": display,
-        "regions": st.regions.read().await.clone(),
+        "regions": regions,
+        "region_stats": rstats,
+        "reference_at": reference_at,
         "w": img.width, "h": img.height,
     });
     std::fs::write(
@@ -1842,10 +1857,42 @@ async fn capture_file(
     State(st): State<Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    use std::io::Write;
+    let (base, want_zip) = match name.strip_suffix(".zip") {
+        Some(base) => (base.to_string(), true),
+        None => (name.clone(), false),
+    };
+    if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
-    match std::fs::read(st.captures_dir().join(format!("{name}.mjpg"))) {
+    if want_zip {
+        let dir = st.captures_dir();
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for ext in ["mjpg", "json"] {
+                let path = dir.join(format!("{base}.{ext}"));
+                if let Ok(bytes) = std::fs::read(&path) {
+                    if writer.start_file(format!("{base}.{ext}"), options).is_ok() {
+                        let _ = writer.write_all(&bytes);
+                    }
+                }
+            }
+            let _ = writer.finish();
+        }
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/zip")
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{base}.zip\""),
+            )
+            .body(Body::from(cursor.into_inner()))
+            .unwrap();
+    }
+    match std::fs::read(st.captures_dir().join(format!("{base}.mjpg"))) {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "video/x-motion-jpeg")

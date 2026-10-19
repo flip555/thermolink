@@ -78,6 +78,9 @@ enum Command {
         /// Use the simulated camera — no hardware needed.
         #[arg(long, default_value_t = false)]
         demo: bool,
+        /// State directory (snapshots, captures, settings).
+        #[arg(long, default_value = "thermolink-data")]
+        data_dir: PathBuf,
     },
 }
 
@@ -121,7 +124,8 @@ async fn main() -> Result<()> {
             media_port,
             bind,
             demo,
-        } => serve(driver, host, control_port, media_port, bind, demo).await,
+            data_dir,
+        } => serve(driver, host, control_port, media_port, bind, demo, data_dir).await,
     }
 }
 
@@ -132,13 +136,13 @@ async fn serve(
     media_port: u16,
     bind: String,
     demo: bool,
+    data_dir: PathBuf,
 ) -> Result<()> {
     let driver = if demo { "mock".to_string() } else { driver };
     let cfg = camera_config(driver, host, control_port, media_port);
     let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);
     let hub = FrameHub::new(512);
     let connected = Arc::new(AtomicBool::new(false));
-    let data_dir = PathBuf::from("thermolink-data");
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("creating {}", data_dir.display()))?;
     let video = thermolink::video::spawn(hub.clone(), 960, 15);
