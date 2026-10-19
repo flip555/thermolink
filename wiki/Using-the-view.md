@@ -3,7 +3,9 @@
 ## Palettes
 
 Pick a palette in **Display → Palette**. Clip/span bands only appear for the
-non-isotherm palettes; the isotherm palette swaps them for band editing.
+non-isotherm palettes; the isotherm palette swaps them for band editing. The
+palette images below are shown in **Fusion** with thermal opacity at **70%**, so
+the thermal colours and the visible detail are both present.
 
 | Rainbow | Ironbow |
 |---|---|
@@ -25,7 +27,9 @@ Save a named profile with **Save as…**; it is applied at startup.
 ## Wipe
 
 Choose **Wipe**, pick which side is thermal, then drag the divider on the image.
-The thermal-opacity slider blends the thermal layer with the visible feed.
+The thermal-opacity slider blends the thermal layer with the visible feed. Each
+example uses a different palette: rainbow (thermal right), ironbow (thermal
+left), white-hot (thermal top), black-hot (thermal bottom).
 
 | Thermal right | Thermal left |
 |---|---|

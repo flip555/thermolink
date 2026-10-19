@@ -13,6 +13,12 @@ feeds, measurement, alarms, snapshots, pre-record, roles, HTTPS, i18n, and
 runtime driver hot-swap. A P3/P1 USB driver is protocol-parsed and unit-tested
 but **untested against hardware** and not yet wired to libusb/nusb.
 
+## A look at it
+
+| Thermal | Fusion (70% thermal) | Wipe |
+|---|---|---|
+| ![Thermal](docs/screenshots/thermal.png) | ![Fusion](docs/screenshots/fusion.png) | ![Wipe](docs/screenshots/wipe.png) |
+
 ## Features
 
 - **Thermal:** palette rendering, clip/span bands, isotherm bands + profiles,
