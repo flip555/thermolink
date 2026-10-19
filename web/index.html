@@ -126,6 +126,8 @@
     .tabpanel{max-height:none}
     .src{max-width:140px}
   }
+#reBanner{position:absolute;top:8px;left:8px;z-index:7;display:none;align-items:center;gap:8px;background:#000c;border:1px solid #3a4553;border-radius:8px;padding:4px 8px;font:11px ui-monospace,Menlo,monospace;color:#fff}
+  #reBanner button{padding:2px 8px}
 </style>
 </head>
 <body>
@@ -166,6 +168,7 @@
       <div id="hot"></div>
       <div id="sel"></div>
       <div id="wipebar" title="drag to move the divider" data-i18n-title="title.wipebar"></div>
+      <div id="reBanner"><span>Snapshot <b id="reName"></b></span><button id="reExit">Exit</button></div>
     </section>
     <section class="chartcard">
       <div class="charthead"><span data-i18n="chart.history">TEMPERATURE HISTORY</span>
@@ -1260,7 +1263,7 @@ function exitReanalysis() {
   $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); state.visStarted = true;
   loadRegions();
 }
-$("reExit").onclick = exitReanalysis;
+if ($("reExit")) $("reExit").onclick = exitReanalysis;
 
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
 $("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELETE"}); $("dtStats").innerHTML="<span>ΔT</span><span>no reference</span>"; };
