@@ -73,6 +73,31 @@ pub struct NotifyConfig {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrerecordConfig {
+    pub enabled: bool,
+    pub before_s: u32,
+    pub after_s: u32,
+}
+
+impl Default for PrerecordConfig {
+    fn default() -> Self {
+        Self { enabled: true, before_s: 5, after_s: 5 }
+    }
+}
+
+#[derive(Clone)]
+struct RingFrame {
+    at: Instant,
+    jpeg: Bytes,
+}
+
+struct ActiveClip {
+    until: Instant,
+    frames: Vec<RingFrame>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthFile {
     pub username: String,
     pub hash: String,
@@ -134,6 +159,9 @@ pub struct AppState {
     alarm_active: Mutex<HashSet<String>>,
     pub last_alarm: RwLock<Option<serde_json::Value>>,
     pub reference: RwLock<Option<Vec<u16>>>,
+    pub prerecord: RwLock<PrerecordConfig>,
+    prerec_ring: Arc<Mutex<VecDeque<RingFrame>>>,
+    active_clip: Arc<Mutex<Option<ActiveClip>>>,
 }
 
 impl AppState {
@@ -178,6 +206,10 @@ impl AppState {
         let auth = std::fs::read_to_string(data_dir.join("auth.json"))
             .ok()
             .and_then(|t| serde_json::from_str::<AuthFile>(&t).ok());
+        let prerecord = std::fs::read_to_string(data_dir.join("prerecord.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<PrerecordConfig>(&t).ok())
+            .unwrap_or_default();
         Self {
             spec,
             hub,
@@ -200,6 +232,9 @@ impl AppState {
             alarm_active: Mutex::new(HashSet::new()),
             last_alarm: RwLock::new(None),
             reference: RwLock::new(None),
+            prerecord: RwLock::new(prerecord),
+            prerec_ring: Arc::new(Mutex::new(VecDeque::with_capacity(400))),
+            active_clip: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -246,6 +281,16 @@ impl AppState {
         let n = self.notify.read().await.clone();
         let _ = std::fs::create_dir_all(&self.data_dir);
         let _ = std::fs::write(self.data_dir.join("notifications.json"), serde_json::to_vec_pretty(&n).unwrap_or_default());
+    }
+
+    async fn persist_prerecord(&self) {
+        let c = self.prerecord.read().await.clone();
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        let _ = std::fs::write(self.data_dir.join("prerecord.json"), serde_json::to_vec_pretty(&c).unwrap_or_default());
+    }
+
+    fn captures_dir(&self) -> PathBuf {
+        self.data_dir.join("captures")
     }
 
     async fn persist_auth(&self) {
@@ -344,6 +389,8 @@ async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats
             );
             let st2 = st.clone();
             tokio::spawn(async move { send_notifications(&st2, &text).await; });
+            let st3 = st.clone();
+            tokio::spawn(async move { begin_clip(&st3).await; });
         }
     }
 }
@@ -381,6 +428,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/dt.json", get(dt_json))
         .route("/api/reanalyze.jpg", get(reanalyze_jpg))
         .route("/api/reanalyze.json", get(reanalyze_json))
+        .route("/api/prerecord", get(get_prerecord).post(set_prerecord))
+        .route("/api/captures", get(list_captures))
+        .route("/api/captures/{name}", get(capture_file))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
         .route("/api/camera/settings", get(camera_settings))
         .route("/api/discover", get(discover))
@@ -1178,6 +1228,153 @@ async fn snapshot_file(
     match std::fs::read(path) {
         Ok(bytes) => jpeg_response(bytes),
         Err(_) => (StatusCode::NOT_FOUND, "no such snapshot").into_response(),
+    }
+}
+
+/// Renders a low-rate JPEG ring and turns alarm events into clips.
+pub fn spawn_prerecorder(st: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(200));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let cfg = st.prerecord.read().await.clone();
+            let Some(img) = st.thermal_image().await else { continue };
+            let display = st.display.read().await.clone();
+            let Ok(jpeg) = render_jpeg(&img, &display, 75) else { continue };
+            let now = Instant::now();
+            let jpeg = Bytes::from(jpeg);
+
+            {
+                let mut ring = st.prerec_ring.lock().await;
+                ring.push_back(RingFrame { at: now, jpeg: jpeg.clone() });
+                let keep = Duration::from_secs(cfg.before_s.max(1) as u64 + 10);
+                while ring.front().is_some_and(|f| now.duration_since(f.at) > keep) {
+                    ring.pop_front();
+                }
+                if ring.len() > 2000 {
+                    ring.pop_front();
+                }
+            }
+
+            let finished = {
+                let mut active = st.active_clip.lock().await;
+                if let Some(clip) = active.as_mut() {
+                    clip.frames.push(RingFrame { at: now, jpeg });
+                    if now >= clip.until {
+                        active.take()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(clip) = finished {
+                if let Err(e) = write_clip(&st, clip).await {
+                    tracing::warn!(error = %e, "clip write failed");
+                }
+            }
+        }
+    });
+}
+
+async fn begin_clip(st: &Arc<AppState>) {
+    let cfg = st.prerecord.read().await.clone();
+    if !cfg.enabled {
+        return;
+    }
+    let now = Instant::now();
+    let frames: Vec<RingFrame> = {
+        let ring = st.prerec_ring.lock().await;
+        ring.iter()
+            .filter(|f| now.duration_since(f.at) <= Duration::from_secs(cfg.before_s as u64))
+            .cloned()
+            .collect()
+    };
+    let mut active = st.active_clip.lock().await;
+    if active.is_none() {
+        *active = Some(ActiveClip {
+            until: now + Duration::from_secs(cfg.after_s as u64),
+            frames,
+        });
+    }
+}
+
+async fn write_clip(st: &Arc<AppState>, clip: ActiveClip) -> anyhow::Result<()> {
+    let dir = st.captures_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+    let name = format!("{}-{:03}", now_secs(), now_ms() % 1000);
+    let mut body = Vec::new();
+    for frame in &clip.frames {
+        body.extend_from_slice(&frame.jpeg);
+    }
+    tokio::fs::write(dir.join(format!("{name}.mjpg")), &body).await?;
+    let meta = json!({
+        "name": name,
+        "at": now_secs(),
+        "frames": clip.frames.len(),
+        "bytes": body.len(),
+        "before_s": st.prerecord.read().await.before_s,
+        "after_s": st.prerecord.read().await.after_s,
+    });
+    tokio::fs::write(
+        dir.join(format!("{name}.json")),
+        serde_json::to_vec_pretty(&meta)?,
+    )
+    .await?;
+    tracing::info!(name = %name, frames = clip.frames.len(), "saved pre-record clip");
+    Ok(())
+}
+
+async fn get_prerecord(State(st): State<Arc<AppState>>) -> Json<PrerecordConfig> {
+    Json(st.prerecord.read().await.clone())
+}
+
+async fn set_prerecord(
+    State(st): State<Arc<AppState>>,
+    Json(next): Json<PrerecordConfig>,
+) -> Json<PrerecordConfig> {
+    let cfg = PrerecordConfig {
+        enabled: next.enabled,
+        before_s: next.before_s.min(60),
+        after_s: next.after_s.min(60),
+    };
+    *st.prerecord.write().await = cfg.clone();
+    st.persist_prerecord().await;
+    Json(cfg)
+}
+
+async fn list_captures(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut names: Vec<String> = std::fs::read_dir(st.captures_dir())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    name.strip_suffix(".mjpg").map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort_by(|a, b| b.cmp(a));
+    Json(json!({ "captures": names }))
+}
+
+async fn capture_file(
+    State(st): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return (StatusCode::BAD_REQUEST, "bad name").into_response();
+    }
+    match std::fs::read(st.captures_dir().join(format!("{name}.mjpg"))) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "video/x-motion-jpeg")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(_) => (StatusCode::NOT_FOUND, "no such capture").into_response(),
     }
 }
 

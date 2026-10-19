@@ -244,6 +244,13 @@
       <div class="row"><button class="primary" id="snap">Save snapshot</button><a class="hint" href="/api/snapshots" target="_blank" rel="noreferrer">JSON</a></div>
       <div class="hint" id="snapState"></div>
       <div class="snaps" id="snaps"></div>
+      <h2>Pre-record</h2>
+      <label class="f"><input type="checkbox" id="prEnabled" style="width:auto"> Enabled</label>
+      <label class="f">Before <input id="prBefore" type="number" min="0" max="60" style="width:70px"><span class="hint">seconds</span></label>
+      <label class="f">After <input id="prAfter" type="number" min="0" max="60" style="width:70px"><span class="hint">seconds</span></label>
+      <div class="row" style="margin-top:8px"><button id="prSave">Save</button></div>
+      <div class="hint" id="prState"></div>
+      <div class="snaps" id="captures"></div>
       <h2>Difference (ΔT)</h2>
       <div class="row"><button id="setRef">Set reference</button><button id="clearRef">Clear</button></div>
       <label class="f"><input type="checkbox" id="dtToggle" style="width:auto"> Show ΔT image</label>
@@ -363,7 +370,7 @@ function setTab(name, persist = true) {
   for (const p of document.querySelectorAll(".tabpanel")) p.classList.toggle("active", p.id === "tab-" + name);
   if (name === "measure") loadRegions();
   if (name === "alarms") { loadAlarms(); loadNotify(); }
-  if (name === "capture") listSnaps();
+  if (name === "capture") { listSnaps(); loadPrerecord(); }
 }
 for (const b of $("tabs").children) b.onclick = () => setTab(b.dataset.tab);
 
@@ -679,6 +686,29 @@ $("camRead").onclick = async () => {
   $("camSettings").innerHTML = Object.entries(d).map(([k,v]) => `<span>${k}</span><span>${v}</span>`).join("");
 };
 
+// ---------- pre-record ----------
+async function loadPrerecord() {
+  try {
+    const d = await (await fetch("/api/prerecord")).json();
+    $("prEnabled").checked = !!d.enabled;
+    if (document.activeElement !== $("prBefore")) $("prBefore").value = d.before_s;
+    if (document.activeElement !== $("prAfter")) $("prAfter").value = d.after_s;
+    listCaptures();
+  } catch(e) {}
+}
+async function listCaptures() {
+  try {
+    const d = await (await fetch("/api/captures")).json();
+    $("captures").innerHTML = (d.captures || []).slice(0, 8)
+      .map(n => `<a href="/api/captures/${n}" target="_blank" rel="noreferrer">${n}</a>`).join("");
+  } catch(e) {}
+}
+$("prSave").onclick = async () => {
+  const body = { enabled: $("prEnabled").checked, before_s: Number($("prBefore").value) || 0, after_s: Number($("prAfter").value) || 0 };
+  const r = await fetch("/api/prerecord", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  $("prState").textContent = r.ok ? "saved" : "error: " + (await r.text());
+};
+
 // ---------- capture / reference ----------
 $("snap").onclick = $("snapTop").onclick = async () => {
   $("snapState").textContent = "saving…";
@@ -814,6 +844,7 @@ loadHistory(); setInterval(loadHistory, 2000);
 loadRegions(); setInterval(loadRegions, 5000);
 loadAlarms(); setInterval(loadAlarms, 2000);
 listSnaps();
+loadPrerecord();
 setInterval(() => { if (state.dt) refreshDt(); }, 1000);
 window.addEventListener("resize", drawChart);
 
