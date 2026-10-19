@@ -1,6 +1,6 @@
 //! HTTP surface. Deliberately imports `camera` and `render`, never a driver.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,10 @@ use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::camera::{Calibration, CameraDriver, CameraSpec, FramePayload, StreamKind, ThermalImage};
-use crate::render::{dt_jpeg, render_jpeg, DisplaySettings, IsoBand, PALETTES};
+use crate::render::{
+    builtin_iso_profiles, dt_jpeg, render_jpeg, validate_iso_bands, DisplaySettings, IsoBand,
+    IsothermState, PALETTES, ISO_PROFILE_LIMIT, ISO_PROFILE_NAME_LIMIT,
+};
 use crate::stream::FrameHub;
 use crate::video::VideoTranscoder;
 
@@ -161,6 +164,7 @@ pub struct AppState {
     pub spec: CameraSpec,
     pub hub: FrameHub,
     pub display: RwLock<DisplaySettings>,
+    pub isotherm: RwLock<IsothermState>,
     pub align: RwLock<Align>,
     pub notify: RwLock<NotifyConfig>,
     pub auth: RwLock<Option<AuthFile>>,
@@ -217,10 +221,25 @@ impl AppState {
             .ok()
             .and_then(|t| serde_json::from_str::<Vec<Alarm>>(&t).ok())
             .unwrap_or_default();
-        let display = std::fs::read_to_string(data_dir.join("display.json"))
+        let mut display = std::fs::read_to_string(data_dir.join("display.json"))
             .ok()
             .and_then(|t| serde_json::from_str::<DisplaySettings>(&t).ok())
             .unwrap_or_default();
+        let mut isotherm = std::fs::read_to_string(data_dir.join("isotherm.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<IsothermState>(&t).ok())
+            .unwrap_or_default();
+        // Built-in profiles are always available; a saved profile with the
+        // same name deliberately overrides one for this installation.
+        for (name, bands) in builtin_iso_profiles() {
+            isotherm.profiles.entry(name).or_insert(bands);
+        }
+        if !isotherm.profiles.contains_key(&isotherm.current) {
+            isotherm.current = "pcba 25-60".into();
+        }
+        if let Some(bands) = isotherm.profiles.get(&isotherm.current) {
+            display.iso_bands = bands.clone();
+        }
         let align = std::fs::read_to_string(data_dir.join("align.json"))
             .ok()
             .and_then(|t| serde_json::from_str::<Align>(&t).ok())
@@ -260,6 +279,7 @@ impl AppState {
             spec,
             hub,
             display: RwLock::new(display),
+            isotherm: RwLock::new(isotherm),
             align: RwLock::new(align),
             notify: RwLock::new(notify),
             auth: RwLock::new(auth),
@@ -316,6 +336,11 @@ impl AppState {
     async fn persist_display(&self) -> io::Result<()> {
         let d = self.display.read().await.clone();
         write_atomic(&self.data_dir, "display.json", &json_bytes(&d)?).await
+    }
+
+    async fn persist_isotherm(&self) -> io::Result<()> {
+        let d = self.isotherm.read().await.clone();
+        write_atomic(&self.data_dir, "isotherm.json", &json_bytes(&d)?).await
     }
 
     async fn persist_align(&self) -> io::Result<()> {
@@ -525,6 +550,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/video.mjpg", get(video_mjpg))
         .route("/api/raw.h264", get(raw_h264))
         .route("/api/display", get(get_display).post(set_display))
+        .route("/api/isotherm", get(get_isotherm).post(set_isotherm))
         .route("/api/align", get(get_align).post(set_align))
         .route("/api/notify", get(get_notify).post(set_notify))
         .route("/api/version", get(version))
@@ -886,6 +912,108 @@ async fn set_display(
     *st.display.write().await = next.clone();
     st.persist_display().await.map_err(persist_error)?;
     Ok(Json(next))
+}
+
+async fn get_isotherm(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let state = st.isotherm.read().await.clone();
+    let bands = st.display.read().await.iso_bands.clone();
+    Json(isotherm_json(&state, bands))
+}
+
+fn isotherm_json(state: &IsothermState, bands: Vec<IsoBand>) -> serde_json::Value {
+    json!({
+        "current": state.current,
+        "profiles": state.profiles,
+        "bands": bands,
+        "builtins": builtin_iso_profiles().keys().cloned().collect::<Vec<_>>(),
+    })
+}
+
+#[derive(Deserialize)]
+struct IsothermRequest {
+    apply: Option<String>,
+    save: Option<String>,
+    delete: Option<String>,
+    bands: Option<Vec<IsoBand>>,
+}
+
+async fn set_isotherm(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<IsothermRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mut state = st.isotherm.read().await.clone();
+    let mut display = st.display.read().await.clone();
+
+    if let Some(name) = req.apply {
+        let Some(bands) = state.profiles.get(&name).cloned() else {
+            return Err((StatusCode::NOT_FOUND, format!("unknown isotherm profile {name:?}")));
+        };
+        state.current = name;
+        display.iso_bands = bands;
+    } else if let Some(name) = req.save {
+        let name = name.trim().to_string();
+        if name.is_empty() || name.chars().count() > ISO_PROFILE_NAME_LIMIT {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("profile name must be 1..={ISO_PROFILE_NAME_LIMIT} characters"),
+            ));
+        }
+        if name.chars().any(char::is_control) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "profile name contains control characters".into(),
+            ));
+        }
+        if !state.profiles.contains_key(&name) && state.profiles.len() >= ISO_PROFILE_LIMIT {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("at most {ISO_PROFILE_LIMIT} profiles are allowed"),
+            ));
+        }
+        let bands = req.bands.clone().unwrap_or_else(|| display.iso_bands.clone());
+        validate_iso_bands(&bands).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        state.profiles.insert(name.clone(), bands.clone());
+        state.current = name;
+        display.iso_bands = bands;
+    } else if let Some(name) = req.delete {
+        let builtins = builtin_iso_profiles();
+        if !state.profiles.contains_key(&name) {
+            return Err((StatusCode::NOT_FOUND, format!("unknown isotherm profile {name:?}")));
+        }
+        if builtins.contains_key(&name) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("built-in profile {name:?} cannot be deleted"),
+            ));
+        }
+        state.profiles.remove(&name);
+        if state.current == name {
+            let fallback = builtins
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "pcba 25-60".into());
+            if let Some(bands) = state.profiles.get(&fallback) {
+                display.iso_bands = bands.clone();
+            }
+            state.current = fallback;
+        }
+    } else if let Some(bands) = req.bands {
+        // Bands alone update the live table without rewriting a named profile.
+        validate_iso_bands(&bands).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        display.iso_bands = bands;
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "isotherm needs apply, save, delete or bands".into(),
+        ));
+    }
+
+    *st.isotherm.write().await = state.clone();
+    *st.display.write().await = display.clone();
+    st.persist_isotherm().await.map_err(persist_error)?;
+    st.persist_display().await.map_err(persist_error)?;
+    Ok(Json(isotherm_json(&state, display.iso_bands)))
 }
 
 async fn thermal_cached(st: &Arc<AppState>) -> Result<Bytes, (StatusCode, String)> {
@@ -2553,6 +2681,42 @@ fn round2(v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isotherm_defaults_and_validation() {
+        let state = IsothermState::default();
+        assert_eq!(state.current, "pcba 25-60");
+        assert!(state.profiles.contains_key("pcba 25-60"));
+        assert!(state.profiles.contains_key("fine 1C"));
+        for bands in state.profiles.values() {
+            validate_iso_bands(bands).expect("built-in bands are valid");
+        }
+
+        let flat = vec![IsoBand { lo: 5.0, hi: 5.0, colour: "#ffffff".into() }];
+        assert!(validate_iso_bands(&flat).is_err(), "hi must exceed lo");
+        let colour = vec![IsoBand { lo: 1.0, hi: 2.0, colour: "red".into() }];
+        assert!(validate_iso_bands(&colour).is_err(), "colour must be #rrggbb");
+        let too_many = vec![
+            IsoBand { lo: 0.0, hi: 1.0, colour: "#ffffff".into() };
+            crate::render::ISO_BAND_LIMIT + 1
+        ];
+        assert!(validate_iso_bands(&too_many).is_err(), "band cap");
+        assert!(validate_iso_bands(&[]).is_err(), "empty table");
+    }
+
+    #[test]
+    fn isotherm_state_round_trips() {
+        let mut state = IsothermState::default();
+        state.current = "mine".into();
+        state.profiles.insert(
+            "mine".into(),
+            vec![IsoBand { lo: 10.0, hi: 20.0, colour: "#00ff00".into() }],
+        );
+        let text = serde_json::to_string(&state).expect("encode");
+        let back: IsothermState = serde_json::from_str(&text).expect("decode");
+        assert_eq!(back.current, "mine");
+        assert_eq!(back.profiles["mine"][0].hi, 20.0);
+    }
 
     #[test]
     fn secure_request_recognises_proxy_header() {

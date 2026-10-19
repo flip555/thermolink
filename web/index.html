@@ -189,7 +189,10 @@
       <h2>Isotherm</h2>
       <div id="isoBands"></div>
       <div class="row" style="margin-top:8px"><button id="isoAdd">Add band</button><button id="isoApply">Apply bands</button></div>
-      <div class="hint">Used when the isotherm palette is selected.</div>
+      <h2>Isotherm profiles</h2>
+      <div class="row"><select id="isoProfile" style="flex:1"></select></div>
+      <div class="row" style="margin-top:6px"><button id="isoSave">Save as…</button><button id="isoDelete">Delete</button></div>
+      <div class="hint" id="isoState">Used when the isotherm palette is selected.</div>
       <h2>PiP size</h2>
       <div class="row"><button data-pip="small">Small</button><button data-pip="medium">Medium</button><button data-pip="large">Large</button></div>
       <h2>Fusion</h2>
@@ -542,6 +545,37 @@ $("isoAdd").onclick = () => {
   renderIsoBands(bands);
 };
 $("isoApply").onclick = () => setDisplay({ iso_bands: collectIsoBands() });
+
+let isoState = null;
+async function loadIso() {
+  try {
+    const d = await (await fetch("/api/isotherm",{cache:"no-store"})).json();
+    isoState = d;
+    const names = Object.keys(d.profiles || {}).sort();
+    $("isoProfile").innerHTML = names
+      .map(n => `<option value="${n}"${n === d.current ? " selected" : ""}>${n}</option>`).join("");
+    $("isoDelete").disabled = (d.builtins || []).includes(d.current);
+    $("isoState").textContent = "profile: " + d.current;
+    if (d.bands && d.bands.length) renderIsoBands(d.bands);
+  } catch(e) { $("isoState").textContent = "profiles unavailable"; }
+}
+async function isoAction(body) {
+  const r = await fetch("/api/isotherm", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  if (!r.ok) { $("isoState").textContent = "error: " + (await r.text()); return false; }
+  await loadIso();
+  return true;
+}
+$("isoProfile").onchange = () => isoAction({ apply: $("isoProfile").value });
+$("isoSave").onclick = async () => {
+  const name = (prompt("Profile name") || "").trim();
+  if (!name) return;
+  if (await isoAction({ save: name, bands: collectIsoBands() })) $("bandState").textContent = "profile saved";
+};
+$("isoDelete").onclick = async () => {
+  if (!isoState || (isoState.builtins || []).includes(isoState.current)) return;
+  if (!confirm(`Delete profile "${isoState.current}"?`)) return;
+  await isoAction({ delete: isoState.current });
+};
 
 function fillDisplay(d) {
   if (!d) return;
@@ -1029,6 +1063,7 @@ loadAlarms(); setInterval(loadAlarms, 2000);
 listSnaps();
 loadPrerecord();
 loadReferences();
+loadIso();
 setInterval(() => { if (state.dt) refreshDt(); }, 1000);
 window.addEventListener("resize", () => { fitViewer(); drawChart(); });
 

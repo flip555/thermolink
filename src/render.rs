@@ -9,6 +9,8 @@
 //!
 //! With everything unset: colours across the frame's own min..max.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::camera::ThermalImage;
@@ -33,6 +35,78 @@ pub struct IsoBand {
     pub lo: f32,
     pub hi: f32,
     pub colour: String,
+}
+
+/// Profile names are limited so a hostile or careless client cannot turn
+/// the settings file into an unbounded list.
+pub const ISO_PROFILE_LIMIT: usize = 32;
+pub const ISO_BAND_LIMIT: usize = 16;
+pub const ISO_PROFILE_NAME_LIMIT: usize = 40;
+
+/// The camera's own default isotherm bands, in Celsius.
+pub fn builtin_iso_profiles() -> BTreeMap<String, Vec<IsoBand>> {
+    let mut out = BTreeMap::new();
+    out.insert("pcba 25-60".to_string(), default_iso_bands());
+    let colours = [
+        "#1f6feb", "#2f8be0", "#16c4c4", "#7fd6b0", "#b9e08a", "#ffe14d", "#ffb347",
+        "#ff8c42", "#ff5e3a", "#ff3b30",
+    ];
+    out.insert(
+        "fine 1C".to_string(),
+        colours
+            .iter()
+            .enumerate()
+            .map(|(i, colour)| IsoBand {
+                lo: 25.0 + i as f32,
+                hi: 26.0 + i as f32,
+                colour: (*colour).into(),
+            })
+            .collect(),
+    );
+    out
+}
+
+/// Validate bands before they reach the renderer or a profile.
+pub fn validate_iso_bands(bands: &[IsoBand]) -> Result<(), String> {
+    if bands.is_empty() {
+        return Err("at least one band is required".into());
+    }
+    if bands.len() > ISO_BAND_LIMIT {
+        return Err(format!("at most {ISO_BAND_LIMIT} bands are allowed"));
+    }
+    for (i, band) in bands.iter().enumerate() {
+        if !band.lo.is_finite() || !band.hi.is_finite() || band.hi <= band.lo {
+            return Err(format!("band {} needs a finite hi greater than lo", i + 1));
+        }
+        if band.lo < -100.0 || band.hi > 1000.0 {
+            return Err(format!("band {} is outside -100..1000 C", i + 1));
+        }
+        let colour = band.colour.as_bytes();
+        if colour.len() != 7
+            || colour[0] != b'#'
+            || !colour[1..].iter().all(u8::is_ascii_hexdigit)
+        {
+            return Err(format!("band {} colour must be #rrggbb", i + 1));
+        }
+    }
+    Ok(())
+}
+
+/// Named isotherm band tables, as in the Python relay's `isotherm.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IsothermState {
+    pub current: String,
+    pub profiles: BTreeMap<String, Vec<IsoBand>>,
+}
+
+impl Default for IsothermState {
+    fn default() -> Self {
+        Self {
+            current: "pcba 25-60".into(),
+            profiles: builtin_iso_profiles(),
+        }
+    }
 }
 
 pub fn default_dt_span() -> f32 {
