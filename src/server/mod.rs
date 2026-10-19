@@ -897,11 +897,12 @@ fn is_secure_request(headers: &HeaderMap) -> bool {
         .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"))
 }
 
-fn session_cookie(token: &str, secure: bool) -> String {
-    format!(
-        "thermolink_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800{}",
-        if secure { "; Secure" } else { "" }
-    )
+fn session_cookie(token: &str, _secure: bool) -> String {
+    // Do not set Secure while the HTTPS listener uses a self-signed cert:
+    // Chrome treats that origin as non-secure and drops the cookie, which
+    // makes a successful login look like a 401 loop. The transport is still
+    // TLS; this only relaxes the cookie's scheme restriction.
+    format!("thermolink_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800")
 }
 
 fn session_response(token: String, secure: bool) -> Response {
@@ -989,11 +990,7 @@ async fn logout(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response
         st.sessions.write().await.remove(&token);
         st.persist_sessions().await;
     }
-    let secure = is_secure_request(&headers);
-    let cookie = format!(
-        "thermolink_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
-        if secure { "; Secure" } else { "" }
-    );
+    let cookie = "thermolink_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
     Response::builder()
         .status(StatusCode::OK)
         .header(header::SET_COOKIE, cookie)
