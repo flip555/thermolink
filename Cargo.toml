@@ -9,6 +9,7 @@ repository = "https://github.com/flip555/thermolink"
 
 [dependencies]
 anyhow = "1"
+arc-swap = "1"
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
 async-stream = "0.3"

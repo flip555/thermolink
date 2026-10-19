@@ -703,8 +703,7 @@ async function loadDrivers() {
 $("driverApply").onclick = async () => {
   const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ driver: $("driverSel").value }) });
   if (r.ok) {
-    $("driverState").textContent = "restarting…";
-    setTimeout(() => location.reload(), 3500);
+    $("driverState").textContent = "applied";
   } else {
     $("driverState").textContent = "error: " + await r.text();
   }

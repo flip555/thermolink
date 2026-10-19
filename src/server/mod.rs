@@ -18,6 +18,7 @@ use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -238,8 +239,14 @@ impl History {
 
 static SEQ: AtomicU64 = AtomicU64::new(1);
 
-pub struct AppState {
+pub struct CameraRuntime {
+    pub driver: Arc<dyn CameraDriver>,
     pub spec: CameraSpec,
+}
+
+pub struct AppState {
+    pub camera: ArcSwap<CameraRuntime>,
+    pub camera_gen: tokio::sync::watch::Sender<u64>,
     pub hub: FrameHub,
     pub display: RwLock<DisplaySettings>,
     pub isotherm: RwLock<IsothermState>,
@@ -255,7 +262,6 @@ pub struct AppState {
     pub video: Option<VideoTranscoder>,
     thermal_cache: Mutex<Option<(u64, String, Bytes)>>,
     events: Mutex<VecDeque<serde_json::Value>>,
-    pub driver: Arc<dyn CameraDriver>,
     pub camera_host: String,
     pub data_dir: PathBuf,
     /// Path of the running executable, captured before an update can
@@ -375,7 +381,8 @@ impl AppState {
             tracing::info!(setup_token = %setup_token, "first-run setup token for non-local clients");
         }
         Self {
-            spec,
+            camera: ArcSwap::from_pointee(CameraRuntime { driver, spec }),
+            camera_gen: tokio::sync::watch::channel(0).0,
             hub,
             display: RwLock::new(display),
             isotherm: RwLock::new(isotherm),
@@ -391,7 +398,6 @@ impl AppState {
             video,
             thermal_cache: Mutex::new(None),
             events: Mutex::new(VecDeque::new()),
-            driver,
             camera_host,
             data_dir,
             exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("thermolink")),
@@ -1211,7 +1217,7 @@ async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
             list.push(json!({ "id": id, "model": s.model, "capabilities": s.capabilities }));
         }
     }
-    Json(json!({ "drivers": list, "current": st.driver.id() }))
+    Json(json!({ "drivers": list, "current": st.camera.load().driver.id() }))
 }
 
 #[derive(Deserialize)]
@@ -1232,29 +1238,31 @@ async fn select_camera(
     if !crate::camera::registry::KNOWN.contains(&req.driver.as_str()) {
         return Err((StatusCode::BAD_REQUEST, "unknown driver".into()));
     }
-    let cfg = json!({
-        "driver": req.driver,
-        "host": req.host.unwrap_or_else(|| st.camera_host.clone()),
-        "control_port": req.control_port.unwrap_or(3001),
-        "media_port": req.media_port.unwrap_or(3000),
-    });
-    write_atomic(&st.data_dir, "camera.json", &serde_json::to_vec(&cfg).unwrap_or_default())
+    let cfg_obj = crate::config::CameraConfig {
+        driver: req.driver,
+        host: req.host.unwrap_or_else(|| st.camera_host.clone()),
+        control_port: req.control_port.unwrap_or(3001),
+        media_port: req.media_port.unwrap_or(3000),
+        ..Default::default()
+    };
+    write_atomic(&st.data_dir, "camera.json", &serde_json::to_vec(&cfg_obj).unwrap_or_default())
         .await
         .map_err(persist_error)?;
-    let exe = st.exe.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        if let Err(e) = crate::update::restart(&exe) {
-            tracing::error!(error = %e, "driver switch restart failed");
-        }
-    });
-    Ok(Json(json!({ "ok": true, "restarting": true })))
+    let driver: Arc<dyn CameraDriver> = Arc::from(
+        crate::camera::registry::build(&cfg_obj)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
+    );
+    let spec = driver.spec();
+    st.camera.store(Arc::new(CameraRuntime { driver, spec }));
+    let next = *st.camera_gen.borrow() + 1;
+    let _ = st.camera_gen.send(next);
+    Ok(Json(json!({ "ok": true, "restarting": false })))
 }
 
 async fn spec(State(st): State<Arc<AppState>>) -> Json<CameraSpec> {
     // The live calibration can change at runtime; a static copy of the boot
     // spec would keep advertising the old value to API clients.
-    let mut spec = st.spec.clone();
+    let mut spec = st.camera.load().spec.clone();
     let calibration = *st.calibration.read().await;
     if let Some(thermal) = spec.thermal.as_mut() {
         thermal.calibration = calibration;
@@ -1291,7 +1299,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
             "align": align,
             "calibration": calibration,
             "palettes": PALETTES,
-            "spec": st.spec,
+            "spec": st.camera.load().spec.clone(),
             "has_reference": false,
         }));
     };
@@ -1325,7 +1333,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
         "calibration": calibration,
         "palettes": PALETTES,
         "has_reference": has_reference,
-        "spec": st.spec,
+        "spec": st.camera.load().spec.clone(),
     }))
 }
 
@@ -1915,7 +1923,8 @@ fn checked_span(
 }
 
 fn thermal_dims(st: &AppState) -> (u32, u32) {
-    st.spec
+    let camera = st.camera.load();
+    camera.spec
         .thermal
         .as_ref()
         .map(|t| (t.width, t.height))
@@ -2204,7 +2213,7 @@ async fn camera_reboot(
             "send {\"confirm\":\"reboot\"} to confirm".into(),
         ));
     }
-    st.driver
+    st.camera.load().driver.clone()
         .reboot()
         .await
         .map(Json)
@@ -2262,7 +2271,7 @@ async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 async fn camera_settings(
     State(st): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match st.driver.read_settings().await {
+    match st.camera.load().driver.clone().read_settings().await {
         Ok(Some(settings)) => Ok(Json(settings)),
         Ok(None) => Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -2312,8 +2321,7 @@ async fn camera_settings_write(
         ));
     }
 
-    let out = st
-        .driver
+    let out = st.camera.load().driver.clone()
         .write_settings(serde_json::Value::Object(changes))
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;

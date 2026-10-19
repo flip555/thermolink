@@ -201,12 +201,12 @@ async fn serve(
         driver.id().to_string(),
         connected.clone(),
         video,
-        driver.clone(),
+        driver,
         cfg.host.clone(),
         data_dir.clone(),
     ));
 
-    tokio::spawn(camera_supervisor(driver, hub.clone(), connected));
+    tokio::spawn(camera_supervisor(state.clone()));
     server::spawn_monitor(state.clone());
     server::spawn_prerecorder(state.clone());
 
@@ -245,35 +245,36 @@ async fn serve(
 }
 
 /// Owns the camera connection: open, read, publish, reconnect.
-async fn camera_supervisor(
-    driver: Arc<dyn CameraDriver>,
-    hub: FrameHub,
-    connected: Arc<AtomicBool>,
-) {
+async fn camera_supervisor(st: Arc<AppState>) {
+    let mut gen = st.camera_gen.subscribe();
     let mut backoff = 2u64;
     loop {
+        let before = *gen.borrow();
+        let runtime = st.camera.load_full();
+        let driver = runtime.driver.clone();
         match tokio::time::timeout(Duration::from_secs(20), driver.open()).await {
             Ok(Ok(mut session)) => {
-                connected.store(true, Ordering::Relaxed);
+                st.connected.store(true, Ordering::Relaxed);
                 info!(driver = driver.id(), "camera session open");
                 loop {
-                    match session.next_frame().await {
-                        Ok(frame) => {
-                            backoff = 2;
-                            hub.publish(frame).await;
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "camera stream ended");
-                            break;
-                        }
+                    tokio::select! {
+                        r = session.next_frame() => match r {
+                            Ok(frame) => {
+                                backoff = 2;
+                                st.hub.publish(frame).await;
+                            }
+                            Err(e) => { warn!(error = %e, "camera stream ended"); break; }
+                        },
+                        _ = gen.changed() => break,
                     }
                 }
                 session.close().await;
-                connected.store(false, Ordering::Relaxed);
+                st.connected.store(false, Ordering::Relaxed);
             }
             Ok(Err(e)) => warn!(error = %e, "camera connect failed"),
             Err(_) => warn!(driver = driver.id(), "camera open timed out"),
         }
+        if *gen.borrow() != before { continue; }
         tokio::time::sleep(Duration::from_secs(backoff)).await;
         backoff = (backoff * 2).min(60);
     }
