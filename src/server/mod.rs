@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -145,6 +145,8 @@ impl History {
         buf.iter().skip(skip).cloned().collect()
     }
 }
+
+static SEQ: AtomicU64 = AtomicU64::new(1);
 
 pub struct AppState {
     pub spec: CameraSpec,
@@ -553,10 +555,12 @@ async fn new_session(st: &Arc<AppState>) -> String {
     let mut rng = OsRng;
     rng.fill_bytes(&mut bytes);
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    st.sessions.write().await.insert(
-        token.clone(),
-        Instant::now() + Duration::from_secs(7 * 24 * 3600),
-    );
+    {
+        let mut sessions = st.sessions.write().await;
+        let now = Instant::now();
+        sessions.retain(|_, expires| *expires > now);
+        sessions.insert(token.clone(), now + Duration::from_secs(7 * 24 * 3600));
+    }
     token
 }
 
@@ -899,14 +903,27 @@ async fn add_region(
     if req.pts.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "region has no points".into()));
     }
+    if req.pts.len() > 16 {
+        return Err((StatusCode::BAD_REQUEST, "too many points".into()));
+    }
+    let kind = match req.kind.as_str() {
+        "point" | "rect" | "poly" => req.kind.clone(),
+        _ => return Err((StatusCode::BAD_REQUEST, "unknown region kind".into())),
+    };
+    if kind == "poly" && req.pts.len() < 3 {
+        return Err((StatusCode::BAD_REQUEST, "polygon needs 3 points".into()));
+    }
+    if st.regions.read().await.len() >= 32 {
+        return Err((StatusCode::CONFLICT, "region limit reached (32)".into()));
+    }
     let region = Region {
-        id: format!("{}", now_secs() * 1000 + (now_ms() % 1000)),
+        id: format!("r{}-{}", now_secs(), SEQ.fetch_add(1, Ordering::Relaxed)),
         name: if req.name.is_empty() {
-            format!("{:?} {},{}", req.kind, req.pts[0][0], req.pts[0][1])
+            format!("{} {},{}", kind, req.pts[0][0], req.pts[0][1])
         } else {
             req.name
         },
-        kind: req.kind,
+        kind,
         pts: req.pts,
         is_ref: false,
     };
@@ -920,10 +937,16 @@ async fn add_region(
 async fn delete_region(
     State(st): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-) -> Json<serde_json::Value> {
-    st.regions.write().await.retain(|r| r.id != id);
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mut regions = st.regions.write().await;
+    let before = regions.len();
+    regions.retain(|r| r.id != id);
+    if regions.len() == before {
+        return Err((StatusCode::NOT_FOUND, "no such region".into()));
+    }
+    drop(regions);
     st.persist_regions().await;
-    Json(json!({ "ok": true }))
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn clear_regions(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -961,8 +984,11 @@ async fn add_alarm(
     if !(-200.0..=500.0).contains(&req.threshold_c) {
         return Err((StatusCode::BAD_REQUEST, "implausible threshold".into()));
     }
+    if st.alarms.read().await.len() >= 16 {
+        return Err((StatusCode::CONFLICT, "alarm limit reached (16)".into()));
+    }
     let alarm = Alarm {
-        id: format!("a{}", now_secs() * 1000 + (now_ms() % 1000)),
+        id: format!("a{}-{}", now_secs(), SEQ.fetch_add(1, Ordering::Relaxed)),
         name: if req.name.is_empty() {
             format!("{} {:.0}C", req.kind, req.threshold_c)
         } else {
@@ -980,14 +1006,24 @@ async fn add_alarm(
 async fn delete_alarm(
     State(st): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-) -> Json<serde_json::Value> {
-    st.alarms.write().await.retain(|a| a.id != id);
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mut alarms = st.alarms.write().await;
+    let before = alarms.len();
+    alarms.retain(|a| a.id != id);
+    if alarms.len() == before {
+        return Err((StatusCode::NOT_FOUND, "no such alarm".into()));
+    }
+    drop(alarms);
+    st.alarm_started.lock().await.remove(&id);
+    st.alarm_active.lock().await.remove(&id);
     st.persist_alarms().await;
-    Json(json!({ "ok": true }))
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn clear_alarms(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     st.alarms.write().await.clear();
+    st.alarm_started.lock().await.clear();
+    st.alarm_active.lock().await.clear();
     st.persist_alarms().await;
     *st.last_alarm.write().await = None;
     Json(json!({ "ok": true }))
@@ -1400,6 +1436,9 @@ fn load_snapshot(st: &AppState, name: &str) -> Result<ThermalImage, (StatusCode,
     let offset = meta["calibration"]["offset"].as_f64().unwrap_or(0.0) as f32;
     let width = meta["w"].as_u64().unwrap_or(160) as u32;
     let height = meta["h"].as_u64().unwrap_or(120) as u32;
+    if width == 0 || height == 0 {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "invalid stored frame size".into()));
+    }
     if raw.len() != (width * height * 2) as usize {
         return Err((StatusCode::INTERNAL_SERVER_ERROR, "stored frame size mismatch".into()));
     }
