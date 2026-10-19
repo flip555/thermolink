@@ -165,6 +165,7 @@ pub struct AppState {
     pub connected: Arc<AtomicBool>,
     pub source: String,
     pub video: Option<VideoTranscoder>,
+    thermal_cache: Mutex<Option<(u64, String, Bytes)>>,
     pub driver: Arc<dyn CameraDriver>,
     pub camera_host: String,
     pub data_dir: PathBuf,
@@ -261,6 +262,7 @@ impl AppState {
             connected,
             source,
             video,
+            thermal_cache: Mutex::new(None),
             driver,
             camera_host,
             data_dir,
@@ -805,14 +807,36 @@ async fn set_display(
     Ok(Json(next))
 }
 
-async fn thermal_jpg(State(st): State<Arc<AppState>>) -> Response {
-    let Some(img) = st.thermal_image().await else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet").into_response();
+async fn thermal_cached(st: &Arc<AppState>) -> Result<Bytes, (StatusCode, String)> {
+    let Some(frame) = st.hub.latest(StreamKind::Thermal).await else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()));
     };
+    let Some(img) = frame.thermal() else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "no thermal image".into()));
+    };
+    let calibration = *st.calibration.read().await;
+    let img = ThermalImage { calibration, ..img.clone() };
     let display = st.display.read().await.clone();
-    match render_jpeg(&img, &display, 85) {
-        Ok(jpeg) => jpeg_response(jpeg),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    let sig = format!("{}:{calibration:?}:{}", frame.seq, serde_json::to_string(&display).unwrap_or_default());
+    {
+        let cache = st.thermal_cache.lock().await;
+        if let Some((seq, cached_sig, jpeg)) = cache.as_ref() {
+            if *seq == frame.seq && cached_sig == &sig {
+                return Ok(jpeg.clone());
+            }
+        }
+    }
+    let jpeg = render_jpeg(&img, &display, 85)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let bytes = Bytes::from(jpeg);
+    *st.thermal_cache.lock().await = Some((frame.seq, sig, bytes.clone()));
+    Ok(bytes)
+}
+
+async fn thermal_jpg(State(st): State<Arc<AppState>>) -> Response {
+    match thermal_cached(&st).await {
+        Ok(jpeg) => jpeg_response(jpeg.to_vec()),
+        Err((code, msg)) => (code, msg).into_response(),
     }
 }
 
@@ -822,9 +846,7 @@ async fn thermal_mjpg(State(st): State<Arc<AppState>>) -> Response {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            let Some(img) = st.thermal_image().await else { continue };
-            let display = st.display.read().await.clone();
-            let Ok(jpeg) = render_jpeg(&img, &display, 80) else { continue };
+            let Ok(jpeg) = thermal_cached(&st).await else { continue };
             yield Ok::<Bytes, std::io::Error>(Bytes::from(multipart_head(&jpeg)));
             yield Ok(Bytes::from(jpeg));
             yield Ok(Bytes::from_static(b"\r\n"));
@@ -1528,15 +1550,49 @@ fn load_snapshot(st: &AppState, name: &str) -> Result<ThermalImage, (StatusCode,
     })
 }
 
+#[derive(Deserialize)]
+struct ReanalyzeQuery {
+    name: String,
+    #[serde(default)]
+    palette: Option<String>,
+    #[serde(default)]
+    clip_lo: Option<f32>,
+    #[serde(default)]
+    clip_hi: Option<f32>,
+    #[serde(default)]
+    span_lo: Option<f32>,
+    #[serde(default)]
+    span_hi: Option<f32>,
+}
+
+fn reanalyze_display(base: &DisplaySettings, q: &ReanalyzeQuery) -> Result<DisplaySettings, (StatusCode, String)> {
+    let mut display = base.clone();
+    if let Some(palette) = &q.palette {
+        if !PALETTES.contains(&palette.as_str()) {
+            return Err((StatusCode::BAD_REQUEST, "unknown palette".into()));
+        }
+        display.palette = palette.clone();
+    }
+    if let Some(v) = q.clip_lo { display.clip_lo = Some(v); }
+    if let Some(v) = q.clip_hi { display.clip_hi = Some(v); }
+    if let Some(v) = q.span_lo { display.span_lo = Some(v); }
+    if let Some(v) = q.span_hi { display.span_hi = Some(v); }
+    Ok(display)
+}
+
 async fn reanalyze_jpg(
     State(st): State<Arc<AppState>>,
-    Query(q): Query<NameQuery>,
+    Query(q): Query<ReanalyzeQuery>,
 ) -> Response {
     let img = match load_snapshot(&st, &q.name) {
         Ok(img) => img,
         Err((code, msg)) => return (code, msg).into_response(),
     };
-    let display = st.display.read().await.clone();
+    let base = st.display.read().await.clone();
+    let display = match reanalyze_display(&base, &q) {
+        Ok(d) => d,
+        Err((code, msg)) => return (code, msg).into_response(),
+    };
     match render_jpeg(&img, &display, 85) {
         Ok(jpeg) => jpeg_response(jpeg),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -1545,10 +1601,19 @@ async fn reanalyze_jpg(
 
 async fn reanalyze_json(
     State(st): State<Arc<AppState>>,
-    Query(q): Query<NameQuery>,
+    Query(q): Query<ReanalyzeQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let img = load_snapshot(&st, &q.name)?;
+    let base = st.display.read().await.clone();
+    let display = reanalyze_display(&base, &q)?;
     let stats = img.stats();
+    let regions: Vec<_> = st
+        .regions
+        .read()
+        .await
+        .iter()
+        .filter_map(|r| region_stats(&img, r))
+        .collect();
     Ok(Json(json!({
         "name": q.name,
         "stats": {
@@ -1560,6 +1625,8 @@ async fn reanalyze_json(
             "w": stats.width, "h": stats.height
         },
         "calibration": img.calibration,
+        "display": display,
+        "regions": regions,
     })))
 }
 

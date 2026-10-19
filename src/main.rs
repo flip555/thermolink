@@ -180,8 +180,8 @@ async fn camera_supervisor(
 ) {
     let mut backoff = 2u64;
     loop {
-        match driver.open().await {
-            Ok(mut session) => {
+        match tokio::time::timeout(Duration::from_secs(20), driver.open()).await {
+            Ok(Ok(mut session)) => {
                 connected.store(true, Ordering::Relaxed);
                 info!(driver = driver.id(), "camera session open");
                 loop {
@@ -199,7 +199,8 @@ async fn camera_supervisor(
                 session.close().await;
                 connected.store(false, Ordering::Relaxed);
             }
-            Err(e) => warn!(error = %e, "camera connect failed"),
+            Ok(Err(e)) => warn!(error = %e, "camera connect failed"),
+            Err(_) => warn!(driver = driver.id(), "camera open timed out"),
         }
         tokio::time::sleep(Duration::from_secs(backoff)).await;
         backoff = (backoff * 2).min(60);
