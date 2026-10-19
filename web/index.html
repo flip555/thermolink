@@ -26,18 +26,19 @@
   .spacer{margin-left:auto}
   .shell{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:12px;padding:12px;height:calc(100dvh - 52px)}
   .stagecol{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+  .viewer.draw{cursor:crosshair}
   .viewer{position:relative;flex:none;margin:auto;min-height:0;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
-  .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block}
+  .viewer img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;user-select:none;-webkit-user-drag:none}
 #visclip{position:absolute;inset:0;overflow:hidden;pointer-events:none}
   #vis{left:50%;top:50%;right:auto;bottom:auto;width:auto;height:100%;max-width:none;object-fit:fill;transform:translate(-50%,-50%) translate(var(--ax,0%),var(--ay,0%)) scale(var(--as,1)) scaleX(var(--fh,1)) scaleY(var(--fv,1)) rotate(var(--ar,0deg));transform-origin:center}
   #dtimg{display:none}
   .viewer.thermal #vis{visibility:hidden}
   .viewer.visible #feed{display:none}
   .viewer.dt #feed{display:none}.viewer.dt #dtimg{display:block}
-  .viewer.wipe.anchor-left #feed{clip-path:inset(0 0 0 var(--split,50%))}
-  .viewer.wipe.anchor-right #feed{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
-  .viewer.wipe.anchor-top #feed{clip-path:inset(0 0 calc(100% - var(--split,50%)) 0)}
-  .viewer.wipe.anchor-bottom #feed{clip-path:inset(var(--split,50%) 0 0 0)}
+  .viewer.wipe.anchor-left #feed,.viewer.wipe.anchor-left #dtimg{clip-path:inset(0 0 0 var(--split,50%))}
+  .viewer.wipe.anchor-right #feed,.viewer.wipe.anchor-right #dtimg{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
+  .viewer.wipe.anchor-top #feed,.viewer.wipe.anchor-top #dtimg{clip-path:inset(0 0 calc(100% - var(--split,50%)) 0)}
+  .viewer.wipe.anchor-bottom #feed,.viewer.wipe.anchor-bottom #dtimg{clip-path:inset(var(--split,50%) 0 0 0)}
   #wipebar{display:none;position:absolute;z-index:8;background:transparent;touch-action:none}
   #wipebar::before{content:"";position:absolute;background:#fff;box-shadow:0 0 0 1px #0009}
   #wipebar::after{content:"";position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;
@@ -51,9 +52,10 @@
   .anchors button{padding:6px;font-size:12px}
   .anchors button.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .viewer.pip #feed{inset:auto 14px 14px auto;width:30%;height:auto;border:1px solid #3a4553;border-radius:8px;box-shadow:0 6px 24px #000a}
-  .viewer.fusion #feed{opacity:.55}
+  .viewer.fusion #feed{opacity:var(--fuse,.55)}
   #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
   .region{fill:#ffd16618;stroke:#ffd166;stroke-width:.7;vector-effect:non-scaling-stroke}
+  .peak{fill:none;stroke:#fff;stroke-width:.9}.peaklbl{fill:#fff;font:4px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.9}
   .regionlbl{fill:#ffd166;font:4px ui-monospace,Menlo,monospace;paint-order:stroke;stroke:#000;stroke-width:.8}
   .readout{position:absolute;left:12px;bottom:12px;display:flex;gap:16px;background:#080a0dd9;border:1px solid #2b3542;border-radius:9px;padding:7px 12px;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);pointer-events:none;z-index:4}
   .readout span{display:block;color:var(--muted);font-size:9px;letter-spacing:.1em}
@@ -67,9 +69,9 @@
   .banner{position:absolute;left:0;right:0;top:0;display:none;align-items:center;gap:10px;padding:8px 12px;background:#4a1414ee;border-bottom:1px solid #a33;font-size:12px;z-index:7}
   .banner.show{display:flex}
   .banner b{color:#ffb4b4}
-  .chartcard{flex:0 0 158px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;min-height:0}
+  .chartcard{flex:0 0 auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;min-height:0}
   .charthead{display:flex;justify-content:space-between;font:10px ui-monospace,Menlo,monospace;color:var(--muted);letter-spacing:.08em;margin-bottom:4px}
-  #chart{width:100%;flex:1;min-height:0;display:block}
+  #chart{width:100%;height:132px;flex:none;min-height:0;display:block}
   .rail{background:var(--card);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
   .tabs{display:flex;border-bottom:1px solid var(--line);flex:none;overflow-x:auto}
   .tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:9px 10px;font-size:11px;color:#9aa4b2;white-space:nowrap}
@@ -137,9 +139,9 @@
 <div class="shell">
   <div class="stagecol">
     <section class="viewer thermal" id="viewer">
-      <div id="visclip"><img id="vis" alt="visible"></div>
-      <img id="feed" alt="thermal">
-      <img id="dtimg" alt="difference">
+      <div id="visclip"><img id="vis" alt="visible" draggable="false"></div>
+      <img id="feed" alt="thermal" draggable="false">
+      <img id="dtimg" alt="difference" draggable="false">
       <svg id="overlay" viewBox="0 0 160 120" preserveAspectRatio="none"></svg>
       <div class="banner" id="banner"><span>ALARM</span><b id="bannerText"></b><span class="spacer"></span><button class="x" id="dismiss">×</button></div>
       <div class="badge" id="badge">waiting</div>
@@ -182,6 +184,8 @@
       <div id="isoBands"></div>
       <div class="row" style="margin-top:8px"><button id="isoAdd">Add band</button><button id="isoApply">Apply bands</button></div>
       <div class="hint">Used when the isotherm palette is selected.</div>
+      <h2>Fusion</h2>
+      <label class="f">Thermal opacity <input type="range" id="fuse" min="0" max="100" value="55" style="width:100%"></label>
       <h2>Wipe</h2>
       <div class="anchors" id="anchors">
         <button data-anchor="left" class="active">Thermal right</button>
@@ -206,7 +210,7 @@
     <div class="tabpanel" id="tab-measure">
       <h2>Measurements</h2>
       <div class="hint" style="margin:0">Click for a point, drag for a box, or draw a polygon.</div>
-      <div class="row" style="margin-top:8px"><button id="polyBtn">Draw polygon</button><span class="hint" id="polyHint"></span></div>
+      <div class="row" style="margin-top:8px"><button id="pointBtn">Point</button><button id="boxBtn">Box</button><button id="polyBtn">Polygon</button><span class="hint" id="polyHint"></span></div>
       <ul class="list" id="regions"><li><span class="grow">No measurements</span></li></ul>
       <div class="row" style="margin-top:10px"><button id="clearRegions">Clear all</button>
         <a class="hint" href="/api/regions.csv" target="_blank" rel="noreferrer">CSV</a></div>
@@ -319,7 +323,7 @@ const state = {
   mode: saved("mode", "thermal"), anchor: saved("anchor", "left"),
   split: Number(saved("split", "50")), dt: saved("dt", "0") === "1",
   w: 160, h: 120, regions: [], alarms: [], history: [], lastAlarm: null, dismissed: null,
-  polyMode: false, polyPts: [], feedStarted: false, visStarted: false,
+  polyMode: false, polyPts: [], drawMode: "none", peaks: [], peaksSig: "", feedStarted: false, visStarted: false,
   align: {x:0,y:0,scale:1,rot:0,flip_h:false,flip_v:false}
 };
 
@@ -397,7 +401,7 @@ function applyWipe() {
 }
 function setMode(mode, persist = true) {
   state.mode = mode;
-  if (state.dt && (mode === "wipe" || mode === "pip" || mode === "fusion")) {
+  if (state.dt && (mode === "pip" || mode === "fusion")) {
     state.dt = false; save("dt", "0"); $("dtToggle").checked = false;
   }
   if (persist) save("mode", mode);
@@ -545,8 +549,11 @@ function toThermal(e) {
 }
 viewer.addEventListener("pointerdown", (e) => {
   if (state.mode === "visible" || state.mode === "wipe" || state.mode === "pip") return;
+  if (state.drawMode === "none") return;
+  e.preventDefault();
   drag = toThermal(e);
-  if (state.polyMode) { viewer.setPointerCapture(e.pointerId); return; }
+  if (state.drawMode === "poly") { viewer.setPointerCapture(e.pointerId); return; }
+  if (state.drawMode === "point") return;
   const r = viewer.getBoundingClientRect();
   $("sel").style.display="block";
   $("sel").style.left=(e.clientX-r.left)+"px"; $("sel").style.top=(e.clientY-r.top)+"px";
@@ -554,7 +561,7 @@ viewer.addEventListener("pointerdown", (e) => {
   viewer.setPointerCapture(e.pointerId);
 });
 viewer.addEventListener("pointermove", (e) => {
-  if (!drag || state.polyMode) return;
+  if (!drag || state.drawMode !== "rect") return;
   const r = viewer.getBoundingClientRect();
   const x=e.clientX-r.left, y=e.clientY-r.top;
   const x0=drag[0]/state.w*r.width, y0=drag[1]/state.h*r.height;
@@ -582,20 +589,33 @@ viewer.addEventListener("pointerup", async (e) => {
     drawRegions();
     return;
   }
-  if (Math.abs(end[0]-start[0])<3 && Math.abs(end[1]-start[1])<3) {
+  if (state.drawMode === "point") {
     const r = await fetch(`/api/point?x=${start[0]}&y=${start[1]}`);
     if (r.ok) { const d=await r.json(); $("probe").innerHTML=`<span>Point ${d.x},${d.y}</span><span>${fmt(d.c)}</span>`; }
-  } else {
+    await fetch("/api/regions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ kind:"point", pts:[start] }) });
+    loadRegions();
+    return;
+  }
+  if (state.drawMode === "rect" && (Math.abs(end[0]-start[0]) >= 2 || Math.abs(end[1]-start[1]) >= 2)) {
     await fetch("/api/regions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ kind:"rect", pts:[start,end] }) });
     loadRegions();
   }
 });
-$("polyBtn").onclick = () => {
-  state.polyMode = !state.polyMode; state.polyPts = [];
-  $("polyBtn").classList.toggle("active", state.polyMode);
-  $("polyHint").textContent = state.polyMode ? "click points; click the first to close" : "";
+function setDraw(mode) {
+  state.drawMode = state.drawMode === mode ? "none" : mode;
+  state.polyMode = state.drawMode === "poly";
+  state.polyPts = [];
+  for (const [id, m] of [["pointBtn","point"],["boxBtn","rect"],["polyBtn","poly"]])
+    $(id).classList.toggle("active", state.drawMode === m);
+  $("viewer").classList.toggle("draw", state.drawMode !== "none");
+  $("polyHint").textContent = state.drawMode === "poly" ? "click points; click the first to close"
+    : state.drawMode === "rect" ? "drag a box"
+    : state.drawMode === "point" ? "click a point" : "";
   drawRegions();
-};
+}
+$("pointBtn").onclick = () => setDraw("point");
+$("boxBtn").onclick = () => setDraw("rect");
+$("polyBtn").onclick = () => setDraw("poly");
 function drawRegions() {
   const svg = $("overlay");
   svg.setAttribute("viewBox", `0 0 ${state.w} ${state.h}`);
@@ -619,6 +639,15 @@ function drawRegions() {
     t.setAttribute("x", s.x0+1); t.setAttribute("y", Math.max(4, s.y0-1));
     t.setAttribute("class","regionlbl");
     t.textContent = `${s.name}: ${fmt(s.avg_c)}`;
+    svg.appendChild(t);
+  }
+  for (const p of state.peaks) {
+    const c = document.createElementNS("http://www.w3.org/2000/svg","circle");
+    c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", "2.4");
+    c.setAttribute("class", "peak"); svg.appendChild(c);
+    const t = document.createElementNS("http://www.w3.org/2000/svg","text");
+    t.setAttribute("x", p.x + 2.6); t.setAttribute("y", Math.max(4, p.y - 1.6));
+    t.setAttribute("class", "peaklbl"); t.textContent = fmt(p.c);
     svg.appendChild(t);
   }
   if (state.polyPts.length) {
@@ -905,6 +934,9 @@ async function poll() {
     const s=d.stats;
     $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
     if (s.hot && s.w && s.h) { $("hot").style.display="block"; $("hot").style.left=(s.hot[0]/s.w*100)+"%"; $("hot").style.top=(s.hot[1]/s.h*100)+"%"; }
+    const peaks = d.peaks || [];
+    const peaksSig = JSON.stringify(peaks);
+    if (peaksSig !== state.peaksSig) { state.peaksSig = peaksSig; state.peaks = peaks; drawRegions(); }
     $("peaks").innerHTML=(d.peaks||[]).length
       ? d.peaks.map((p,i)=>`<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
       : "<li><span>no hot spots</span><span></span></li>";
@@ -919,6 +951,10 @@ $("vis").onerror = () => { state.visStarted=false; setTimeout(()=>{ $("vis").src
 // ---------- startup ----------
 initAuth();
 $("unit").textContent = "°" + state.unit;
+const fuse = saved("fuse", "55");
+$("fuse").value = fuse;
+$("viewer").style.setProperty("--fuse", Number(fuse) / 100);
+$("fuse").oninput = (e) => { $("viewer").style.setProperty("--fuse", Number(e.target.value) / 100); save("fuse", e.target.value); };
 $("dtToggle").checked = state.dt;
 setMode(state.mode, false);
 setTab(saved("tab", "display"), false);

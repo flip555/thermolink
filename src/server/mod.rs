@@ -403,13 +403,27 @@ async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats
     let mut active = st.alarm_active.lock().await;
 
     for alarm in &alarms {
-        let condition = match alarm.kind.as_str() {
-            "below" => stats.min_c <= alarm.threshold_c,
-            _ => stats.max_c >= alarm.threshold_c,
+        let above = alarm.kind != "below";
+        let fire = if above {
+            stats.max_c >= alarm.threshold_c
+        } else {
+            stats.min_c <= alarm.threshold_c
         };
-        if !condition {
+        let clear = if above {
+            stats.max_c < alarm.threshold_c - 0.5
+        } else {
+            stats.min_c > alarm.threshold_c + 0.5
+        };
+        if clear {
             started.remove(&alarm.id);
             active.remove(&alarm.id);
+            continue;
+        }
+        if active.contains(&alarm.id) {
+            continue;
+        }
+        if !fire {
+            started.remove(&alarm.id);
             continue;
         }
         let since = *started.entry(alarm.id.clone()).or_insert_with(Instant::now);
