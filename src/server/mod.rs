@@ -2569,6 +2569,8 @@ async fn reanalyze_json(
     let base = st.display.read().await.clone();
     let display = reanalyze_display(&base, &q)?;
     let stats = img.stats();
+    let peaks = img.peaks(3);
+    let has_video = st.snapshots_dir().join(format!("{}.vis", q.name)).exists();
     let regions: Vec<_> = st
         .regions
         .read()
@@ -2589,6 +2591,8 @@ async fn reanalyze_json(
         "calibration": img.calibration,
         "display": display,
         "regions": regions,
+        "peaks": peaks,
+        "has_video": has_video,
     })))
 }
 

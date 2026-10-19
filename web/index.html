@@ -670,6 +670,11 @@ function syncPaletteVisibility(palette) {
 }
 
 function syncModeVisibility() {
+  const hasVisible = state.reanalysis ? !!state.reanalysisVideo : (state.caps ? !!state.caps.visible : true);
+  for (const b of $("modes").children) {
+    if (["visible","wipe","pip","fusion"].includes(b.dataset.mode)) b.style.display = hasVisible ? "" : "none";
+  }
+  if (!hasVisible && ["visible","wipe","pip","fusion"].includes(state.mode)) setMode("thermal", false);
   for (const el of document.querySelectorAll("[data-modes]")) {
     const modes = el.dataset.modes.split(/\s+/);
     el.style.display = modes.includes(state.mode) ? "" : "none";
@@ -1236,6 +1241,13 @@ async function openReanalysis(name) {
     state.reanalysis = name;
     state.reanalysisVideo = !!d.has_video;
     state.regions = d.regions || [];
+    state.peaks = d.peaks || [];
+    state.peaksSig = JSON.stringify(state.peaks);
+    const ss = d.stats || {};
+    $("tmin").textContent = fmt(ss.min_c); $("tmean").textContent = fmt(ss.mean_c); $("tmax").textContent = fmt(ss.max_c);
+    $("peaks").innerHTML = state.peaks.length
+      ? state.peaks.map((p,i)=>`<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
+      : "<li><span>snapshot peaks</span><span></span></li>";
     drawRegions();
     $("reName").textContent = name;
     $("reBanner").style.display = "flex";
@@ -1261,6 +1273,7 @@ function exitReanalysis() {
   $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); state.feedStarted = true;
   $("vis").style.display = "block";
   $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); state.visStarted = true;
+  applyWipe();
   loadRegions();
 }
 if ($("reExit")) $("reExit").onclick = exitReanalysis;
@@ -1493,15 +1506,17 @@ async function poll() {
     if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); }
     if (d.video && !state.visStarted && !state.codecActive) { state.visStarted = true; $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); }
     if (!ready || !d.stats) return;
-    const s=d.stats;
-    $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
-    if (s.hot && s.w && s.h) { $("hot").style.display="block"; $("hot").style.left=(s.hot[0]/s.w*100)+"%"; $("hot").style.top=(s.hot[1]/s.h*100)+"%"; }
-    const peaks = d.peaks || [];
-    const peaksSig = JSON.stringify(peaks);
-    if (peaksSig !== state.peaksSig) { state.peaksSig = peaksSig; state.peaks = peaks; drawRegions(); }
-    $("peaks").innerHTML=(d.peaks||[]).length
-      ? d.peaks.map((p,i)=>`<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
-      : "<li><span>no hot spots</span><span></span></li>";
+    if (!state.reanalysis) {
+      const s=d.stats;
+      $("tmin").textContent=fmt(s.min_c); $("tmean").textContent=fmt(s.mean_c); $("tmax").textContent=fmt(s.max_c);
+      if (s.hot && s.w && s.h) { $("hot").style.display="block"; $("hot").style.left=(s.hot[0]/s.w*100)+"%"; $("hot").style.top=(s.hot[1]/s.h*100)+"%"; }
+      const peaks = d.peaks || [];
+      const peaksSig = JSON.stringify(peaks);
+      if (peaksSig !== state.peaksSig) { state.peaksSig = peaksSig; state.peaks = peaks; drawRegions(); }
+      $("peaks").innerHTML=(d.peaks||[]).length
+        ? d.peaks.map((p,i)=>`<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
+        : "<li><span>no hot spots</span><span></span></li>";
+    }
   } catch(e) {
     $("dot").className="dot"; $("link").innerHTML='<span class="err">unreachable</span>';
   }
