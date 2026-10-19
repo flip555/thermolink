@@ -52,3 +52,23 @@ left), white-hot (thermal top), black-hot (thermal bottom).
 Snapshots can be re-opened with **re** in the Capture list. That enters a stored
 view in the main window (thermal + saved visible frame), with the palette,
 bands, wipe and fusion controls still active; **Exit** returns to live.
+
+## Full-window examples
+
+![Wipe view](images/ui-wipe.png)
+
+Wipe with thermal right, visible left, alignment and scale in the Display rail.
+
+![Re-analysis in Wipe](images/ui-reanalysis-wipe.png)
+
+A stored snapshot in Wipe: the thermal overlay and the saved visible still are
+both available, and the stored measurements stay frozen.
+
+![ΔT reference](images/ui-dt.png)
+
+Difference against a saved reference. The span is adjustable; a tight span
+saturates quickly.
+
+![Isotherm](images/ui-isotherm.png)
+
+Isotherm bands with colour swatches and saved profiles.

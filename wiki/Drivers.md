@@ -30,3 +30,15 @@ closes the old session and opens the new one. No process restart.
 4. Add protocol/parser tests; byte captures are ideal fixtures.
 
 Full contract: [docs/DRIVERS.md](https://github.com/flip555/thermolink/blob/main/docs/DRIVERS.md).
+
+## Camera tab
+
+![Camera tab](images/ui-camera.png)
+
+The Camera tab is capability-driven: driver selection and hot-swap are always
+present; discovery, network settings and reboot appear only when the selected
+driver advertises them.
+
+The P3/P1 USB path uses `nusb` and needs the udev rule from
+[Installation](Installation) or `docs/DEPLOYMENT.md`; hardware validation is
+still pending.

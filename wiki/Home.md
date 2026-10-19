@@ -6,6 +6,11 @@ ThermoLink is a Rust relay: it captures thermal and visible frames, renders
 palettes/measurements, records, raises alarms, and serves a browser UI. Drivers
 hide vendor protocols; the server never imports a concrete driver.
 
+![Thermal view](images/ui-thermal.png)
+
+See the [screenshot gallery](Screenshots) for palettes, wipe, measurement,
+alarms, capture, re-analysis and ΔT.
+
 ## Quick start
 
 ```bash
@@ -42,3 +47,5 @@ first admin account.
 
 Full repository docs live in
 [`docs/`](https://github.com/flip555/thermolink/tree/main/docs).
+- [Screenshots](Screenshots)
+- [Alarms and recording](Alarms-and-recording)

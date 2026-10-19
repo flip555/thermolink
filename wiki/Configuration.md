@@ -43,3 +43,14 @@ offset/scale/flip/rotation), `calibration.json` (scale/offset),
 The certificate is generated for `172.20.1.85`, `172.20.5.127`, `127.0.0.1`
 and `localhost`. Replace the files or put a trusted reverse proxy in front for a
 public deployment.
+
+## Panels at a glance
+
+![Display panel](images/panel-display.png)
+
+The **Display** panel owns palette, bands, alignment, scale and hot spots.
+
+![Camera panel](images/panel-camera.png)
+
+The **Camera** panel shows source/driver details, relay update controls,
+discovery and the camera network block (when the driver advertises it).

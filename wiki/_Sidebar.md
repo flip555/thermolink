@@ -7,3 +7,5 @@
 - [HTTP API](API)
 - [Security](Security)
 - [Troubleshooting](Troubleshooting)
+- [Screenshots](Screenshots)
+- [Alarms and recording](Alarms-and-recording)

@@ -42,3 +42,16 @@ one. NaN peaks were a `celsius` vs `c` mapping bug, fixed in the current build.
 `captures/`.
 
 Full detail: [docs/TROUBLESHOOTING.md](https://github.com/flip555/thermolink/blob/main/docs/TROUBLESHOOTING.md).
+
+## Re-analysis and ΔT checks
+
+![Stored snapshot](images/ui-reanalysis.png)
+
+If **re** opens a thermal-only view, that snapshot predates visible-still
+capture; take a new snapshot. The banner and **Exit** confirm you are in the
+stored view rather than live.
+
+![ΔT reference](images/ui-dt.png)
+
+A saturated pink ΔT field is normal for a small span. Widen **Span ±** or
+re-save the reference with the camera settled.

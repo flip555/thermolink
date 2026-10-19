@@ -49,3 +49,11 @@ The in-app restart/driver switch re-executes the same binary, so no supervisor
 is required for those; systemd still restarts on crashes.
 
 Full detail: [docs/DEPLOYMENT.md](https://github.com/flip555/thermolink/blob/main/docs/DEPLOYMENT.md).
+
+## The UI
+
+After signing in, the live view opens on Thermal with the Display tab. The header
+shows the active driver/model and a green link dot; the right rail switches
+between Display, Measure, Alarms, Capture and Camera.
+
+![First look](images/ui-thermal.png)
