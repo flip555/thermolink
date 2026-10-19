@@ -12,6 +12,7 @@ permissions:
   actions: read
 jobs:
   analyze:
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
