@@ -87,11 +87,18 @@ the three hottest spots, palette switching, and independent clip and span bands
 (clip hides temperatures as white; span maps the palette onto a chosen range).
 `Save JPEG` downloads the current render.
 
+The UI is translated into English, Spanish, French, German, Portuguese, Chinese,
+Japanese, Russian and Arabic. The picker sits in the header; the choice is kept
+in `localStorage`, Arabic switches the page to right-to-left, and every key falls
+back to English. Language files live in `web/i18n/` and are embedded in the
+binary, so `/i18n/<lang>.json` works without a sidecar directory.
+
 ### HTTP surface
 
 | Path | Purpose |
 |------|---------|
 | `/` | web UI |
+| `/i18n/<lang>.json` | UI translations (public; `en`, `es`, `fr`, `de`, `pt`, `zh`, `ja`, `ru`, `ar`) |
 | `/api/spec` | driver capabilities (resolution, bit depth, calibration) |
 | `/api/thermal.json` | stats, peaks, display settings, connection state |
 | `/api/thermal.jpg` | one rendered frame |
