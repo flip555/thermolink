@@ -34,6 +34,7 @@ first admin account.
 - [Installation](Installation)
 - [Configuration](Configuration)
 - [Drivers](Drivers)
+- [Using the view](Using-the-view)
 - [Architecture](Architecture)
 - [HTTP API](API)
 - [Security](Security)
