@@ -125,6 +125,7 @@ pub struct AppState {
     pub source: String,
     pub video: Option<VideoTranscoder>,
     pub driver: Arc<dyn CameraDriver>,
+    pub camera_host: String,
     pub data_dir: PathBuf,
     pub history: Arc<History>,
     pub regions: RwLock<Vec<Region>>,
@@ -143,6 +144,7 @@ impl AppState {
         connected: Arc<AtomicBool>,
         video: Option<VideoTranscoder>,
         driver: Arc<dyn CameraDriver>,
+        camera_host: String,
         data_dir: PathBuf,
     ) -> Self {
         let calibration = std::fs::read_to_string(data_dir.join("calibration.json"))
@@ -189,6 +191,7 @@ impl AppState {
             source,
             video,
             driver,
+            camera_host,
             data_dir,
             history: Arc::new(History::new()),
             regions: RwLock::new(regions),
@@ -380,6 +383,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/reanalyze.json", get(reanalyze_json))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
         .route("/api/camera/settings", get(camera_settings))
+        .route("/api/discover", get(discover))
         .route("/api/snapshot", post(snapshot))
         .route("/api/snapshots", get(list_snapshots))
         .route("/api/snapshots/{name}", get(snapshot_file))
@@ -935,6 +939,40 @@ async fn dt_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 struct CalibrationFile {
     scale: f32,
     offset: f32,
+}
+
+async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let parts: Vec<&str> = st.camera_host.split('.').collect();
+    if parts.len() != 4 {
+        return Json(json!({ "hosts": [], "error": "camera host is not an IPv4 address" }));
+    }
+    let base = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
+    let sem = Arc::new(tokio::sync::Semaphore::new(64));
+    let mut tasks = Vec::new();
+    for last in 1..=254u8 {
+        let ip = format!("{base}.{last}");
+        let sem = sem.clone();
+        tasks.push(tokio::spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
+            match tokio::time::timeout(
+                Duration::from_millis(220),
+                tokio::net::TcpStream::connect((ip.as_str(), 3001)),
+            )
+            .await
+            {
+                Ok(Ok(_)) => Some(ip),
+                _ => None,
+            }
+        }));
+    }
+    let mut hosts = Vec::new();
+    for task in tasks {
+        if let Ok(Some(ip)) = task.await {
+            hosts.push(ip);
+        }
+    }
+    hosts.sort_by_key(|ip| ip.rsplit('.').next().and_then(|n| n.parse::<u16>().ok()));
+    Json(json!({ "hosts": hosts, "scanned": format!("{base}.0/24") }))
 }
 
 async fn camera_settings(

@@ -261,6 +261,9 @@
         <span>Video</span><span id="vlink">–</span>
         <span>Version</span><span id="ver">–</span>
       </div>
+      <h2>Discovery</h2>
+      <div class="row"><button id="discover">Discover cameras</button></div>
+      <div class="kv" id="discovered" style="margin-top:8px"><span>—</span><span>not scanned</span></div>
       <h2>Camera settings</h2>
       <div class="row"><button id="camRead">Read from camera</button></div>
       <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span>not read</span></div>
@@ -655,6 +658,16 @@ $("notifyClear").onclick = async () => {
   await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ discord:"", slack:"", telegram_token:"", telegram_chat:"", webhook:"" })});
   for (const id of ["notifyDiscord","notifySlack","notifyTgToken","notifyTgChat","notifyHook"]) $(id).value = "";
   loadNotify();
+};
+
+$("discover").onclick = async () => {
+  $("discovered").innerHTML = "<span>Scanning…</span><span>port 3001</span>";
+  const r = await fetch("/api/discover");
+  if (!r.ok) { $("discovered").innerHTML = `<span>Error</span><span>${await r.text()}</span>`; return; }
+  const d = await r.json();
+  $("discovered").innerHTML = (d.hosts || []).length
+    ? d.hosts.map(h => `<span>${h}</span><span>port 3001 open</span>`).join("")
+    : "<span>—</span><span>none found</span>";
 };
 
 // ---------- camera settings ----------
