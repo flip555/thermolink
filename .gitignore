@@ -4,3 +4,5 @@
 *.mjpg
 .env
 data/
+
+thermolink-data/

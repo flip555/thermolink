@@ -643,6 +643,7 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
+ "futures-core",
  "jpeg-encoder",
  "serde",
  "serde_json",

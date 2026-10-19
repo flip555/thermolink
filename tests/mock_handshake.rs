@@ -104,8 +104,14 @@ async fn handshake_then_frames() {
 
     // The driver must have echoed the mock's live flag in START (8-byte packet).
     let packets = seen.lock().await;
-    let starts: Vec<_> = packets.iter().filter(|p| p.len() == 8).collect();
-    assert_eq!(starts.len(), 2, "expected a START per stream");
+    // Control traffic shares this record: only media START packets carry the
+    // live flag in their first four bytes.
+    let starts: Vec<_> = packets
+        .iter()
+        .filter(|p| p.len() == 8 && p[..4] == FLAG)
+        .collect();
+    let shown: Vec<String> = starts.iter().map(|p| p.iter().map(|b| format!("{b:02x}")).collect()).collect();
+    assert_eq!(starts.len(), 2, "expected a START per stream, got {shown:?}");
     for p in starts {
         assert_eq!(&p[..4], &FLAG, "START did not carry the live session flag");
         assert_eq!(&p[4..8], &1u32.to_le_bytes());
@@ -156,14 +162,23 @@ async fn handle_media(mut s: TcpStream, seen: Arc<Mutex<Vec<Vec<u8>>>>) {
 
 /// Split the next complete client packet off the buffer.
 fn take_packet(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
-    if buf.len() < 4 {
+    let magic = [0x78, 0xb6, 0x3a, 0x12];
+    let serial = b"888888";
+
+    // A packet can arrive split at any byte, including inside the 4-byte magic
+    // or the 6-byte serial prefix. Do not mistake a partial header for a short
+    // 8-byte START.
+    if buf.len() < 6 && (magic.starts_with(buf) || serial.starts_with(buf)) {
         return None;
     }
-    let magic = [0x78, 0xb6, 0x3a, 0x12];
+
     let len = if buf.starts_with(&magic) {
+        if buf.len() < 48 { return None; }
         48
-    } else if buf.starts_with(b"888888") {
+    } else if buf.starts_with(serial) {
         40
+    } else if magic.starts_with(buf) || serial.starts_with(buf) {
+        return None;
     } else {
         8
     };

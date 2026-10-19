@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -137,11 +138,20 @@ async fn serve(
     let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);
     let hub = FrameHub::new(512);
     let connected = Arc::new(AtomicBool::new(false));
+    let data_dir = PathBuf::from("thermolink-data");
+    std::fs::create_dir_all(&data_dir)
+        .with_context(|| format!("creating {}", data_dir.display()))?;
+    let video = thermolink::video::spawn(hub.clone(), 960, 15);
+    if video.is_none() {
+        tracing::warn!("ffmpeg unavailable — visible view disabled");
+    }
     let state = Arc::new(AppState::new(
         driver.spec(),
         hub.clone(),
         driver.id().to_string(),
         connected.clone(),
+        video,
+        data_dir,
     ));
 
     tokio::spawn(camera_supervisor(driver, hub.clone(), connected));

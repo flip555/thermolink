@@ -16,6 +16,7 @@ pub mod config;
 pub mod render;
 pub mod server;
 pub mod stream;
+pub mod video;
 
 pub use camera::{
     Calibration, CameraDriver, CameraFrame, CameraSession, CameraSpec, FramePayload, Peak,

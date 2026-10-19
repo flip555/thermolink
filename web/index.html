@@ -8,76 +8,86 @@
 <style>
   :root{color-scheme:dark}
   *{box-sizing:border-box}
-  body{margin:0;background:#0b0d10;color:#e6e8eb;
-       font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-  header{display:flex;align-items:center;gap:12px;padding:12px 18px;
-         border-bottom:1px solid #1e242c;position:sticky;top:0;background:#0b0d10cc;
-         backdrop-filter:blur(6px);z-index:10}
-  header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
-  .dot{width:9px;height:9px;border-radius:50%;background:#e5484d;transition:.2s}
+  body{margin:0;background:#0b0d10;color:#e6e8eb;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #1e242c;
+         position:sticky;top:0;background:#0b0d10e6;backdrop-filter:blur(8px);z-index:20;flex-wrap:wrap}
+  header h1{font-size:15px;margin:0 8px 0 0;font-weight:650}
+  .dot{width:9px;height:9px;border-radius:50%;background:#e5484d}
   .dot.on{background:#30a46c;box-shadow:0 0 8px #30a46c88}
-  .src{color:#8b949e;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+  .src{color:#8b949e;font:12px ui-monospace,Menlo,monospace}
   .spacer{margin-left:auto}
-  main{max-width:1320px;margin:0 auto;padding:18px;display:grid;
-       grid-template-columns:minmax(0,1fr) 330px;gap:18px;align-items:start}
-  @media (max-width:980px){main{grid-template-columns:1fr}}
-  .viewer{position:relative;background:#000;border:1px solid #1e242c;border-radius:12px;
-          overflow:hidden;aspect-ratio:4/3}
-  #feed{width:100%;height:100%;display:block;object-fit:fill;image-rendering:auto}
-  .waiting{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
-           background:#0b0d10;color:#8b949e;font-size:13px;text-align:center;padding:24px}
+  .modes{display:flex;gap:4px;background:#12171e;border:1px solid #1e242c;border-radius:8px;padding:3px}
+  .modes button{border:0;background:transparent;padding:5px 9px;font-size:12px;border-radius:6px;color:#9aa4b2}
+  .modes button.active{background:#1f6feb;color:#fff}
+  main{max-width:1380px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:1000px){main{grid-template-columns:1fr}}
+  .viewer{position:relative;background:#000;border:1px solid #1e242c;border-radius:12px;overflow:hidden;aspect-ratio:16/9;touch-action:none}
+  #vis,#feed{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block}
+  .viewer.thermal #vis{visibility:hidden}
+  .viewer.visible #feed{display:none}
+  .viewer.wipe #feed{clip-path:inset(0 0 0 50%)}
+  .viewer.pip #feed{inset:auto 12px 12px auto;width:30%;height:auto;border:1px solid #3a4553;border-radius:8px;box-shadow:0 6px 24px #000a}
+  .viewer.fusion #feed{opacity:.55}
+  .waiting{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#0b0d10;color:#8b949e;font-size:13px;text-align:center;padding:24px}
   .waiting.show{display:flex}
-  .readout{position:absolute;left:12px;bottom:12px;display:flex;gap:16px;
-           background:#080a0dcc;border:1px solid #2b3542;border-radius:9px;
-           padding:8px 12px;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px)}
-  .readout div span{display:block;color:#8b949e;font-size:10px;letter-spacing:.08em}
-  .readout b{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+  .readout{position:absolute;left:12px;bottom:12px;display:flex;gap:15px;background:#080a0dd0;border:1px solid #2b3542;
+           border-radius:9px;padding:7px 11px;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);pointer-events:none}
+  .readout span{display:block;color:#8b949e;font-size:10px;letter-spacing:.08em}
+  .readout b{font-size:15px;font-variant-numeric:tabular-nums}
   .readout .max b{color:#ff9f1a}.readout .min b{color:#7fd1ff}
-  #hot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #fff;
-       border-radius:50%;box-shadow:0 0 0 2px #000a;display:none;pointer-events:none}
-  #hot::after{content:"HOT";position:absolute;left:16px;top:-6px;font:10px ui-monospace,Menlo,monospace;
-              color:#fff;background:#080a0dd9;border:1px solid #4a5768;border-radius:4px;padding:1px 5px;white-space:nowrap}
-  .badge{position:absolute;top:12px;left:12px;background:#080a0dcc;border:1px solid #2b3542;
-         border-radius:999px;padding:4px 10px;font:11px ui-monospace,Menlo,monospace;color:#c8d1dc}
-  aside{display:flex;flex-direction:column;gap:12px}
-  .card{background:#12171e;border:1px solid #1e242c;border-radius:11px;padding:13px 14px}
-  .card h2{margin:0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#8b949e;font-weight:600}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  button,select,input{font:13px system-ui,sans-serif;color:#e6e8eb;background:#1a212a;
-                      border:1px solid #2b3542;border-radius:7px;padding:6px 9px}
-  button{cursor:pointer}
-  button:hover{background:#232c37}
+  #hot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #fff;border-radius:50%;
+       box-shadow:0 0 0 2px #000a;display:none;pointer-events:none}
+  #sel{position:absolute;border:1px solid #ffd166;background:#ffd16622;display:none;pointer-events:none}
+  .badge{position:absolute;top:10px;left:10px;background:#080a0dd0;border:1px solid #2b3542;border-radius:999px;
+         padding:4px 9px;font:11px ui-monospace,Menlo,monospace;color:#c8d1dc;pointer-events:none}
+  aside{display:flex;flex-direction:column;gap:10px}
+  .card{background:#12171e;border:1px solid #1e242c;border-radius:11px;padding:12px 13px}
+  .card h2{margin:0 0 9px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#8b949e;font-weight:600}
+  .row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+  button,select,input{font:13px system-ui,sans-serif;color:#e6e8eb;background:#1a212a;border:1px solid #2b3542;border-radius:7px;padding:6px 9px}
+  button{cursor:pointer}button:hover{background:#232c37}
   button.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
-  .pals{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-  .pals button{padding:7px 8px;font-size:12px}
-  label.f{display:flex;align-items:center;gap:7px;color:#c8d1dc;font-size:12px;margin-top:9px}
-  label.f input{width:88px;padding:5px 7px}
+  .pals{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .pals button{padding:6px;font-size:12px}
+  label.f{display:flex;align-items:center;gap:7px;color:#c8d1dc;font-size:12px;margin-top:8px}
+  label.f input{width:92px;padding:5px 7px}
   label.f .hint{margin-left:auto;color:#5c6673;font-size:11px}
-  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12px;color:#c8d1dc}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;color:#c8d1dc}
   .kv span:nth-child(odd){color:#8b949e}
-  .peaks{margin:8px 0 0;padding:0;list-style:none;font:12px ui-monospace,Menlo,monospace;color:#c8d1dc}
+  .peaks{margin:6px 0 0;padding:0;list-style:none;font:12px ui-monospace,Menlo,monospace;color:#c8d1dc}
   .peaks li{display:flex;justify-content:space-between;padding:3px 0;border-top:1px solid #1b222b}
   .peaks li:first-child{border-top:0}
-  .ok{color:#30a46c}.warn{color:#e5a83d}.err{color:#e5484d}
-  a.btn{display:inline-block;text-decoration:none;background:#1a212a;border:1px solid #2b3542;
-        border-radius:7px;padding:6px 10px;color:#e6e8eb;font-size:13px}
+  .ok{color:#30a46c}.err{color:#e5484d}.warn{color:#e5a83d}
+  a.btn{display:inline-block;text-decoration:none;background:#1a212a;border:1px solid #2b3542;border-radius:7px;padding:6px 9px;color:#e6e8eb;font-size:12px}
   a.btn:hover{background:#232c37}
-  footer{max-width:1320px;margin:0 auto;padding:0 18px 22px;color:#5c6673;font-size:11px}
+  .hint{color:#5c6673;font-size:11px;margin-top:7px}
+  .snaps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .snaps a{font:11px ui-monospace,Menlo,monospace;color:#7fd1ff;text-decoration:none;border:1px solid #24303d;border-radius:5px;padding:2px 5px}
+  footer{max-width:1380px;margin:0 auto;padding:0 16px 20px;color:#5c6673;font-size:11px}
 </style>
 </head>
 <body>
 <header>
   <h1>ThermoLink</h1>
-  <div class="dot" id="dot" title="camera state"></div>
+  <div class="dot" id="dot"></div>
   <div class="src" id="source">connecting…</div>
+  <div class="modes" id="modes">
+    <button data-mode="thermal" class="active">Thermal</button>
+    <button data-mode="visible">Visible</button>
+    <button data-mode="wipe">Wipe</button>
+    <button data-mode="pip">PiP</button>
+    <button data-mode="fusion">Fusion</button>
+  </div>
   <div class="spacer"></div>
   <div class="src" id="unitLabel">°C</div>
-  <button id="unit" title="toggle units">Switch to °F</button>
+  <button id="unit">Switch to °F</button>
+  <button id="snap">Snapshot</button>
 </header>
 
 <main>
-  <section class="viewer" id="viewer">
-    <img id="feed" alt="thermal live view" src="/api/thermal.mjpg">
+  <section class="viewer thermal" id="viewer">
+    <img id="vis" alt="visible view" src="/api/video.mjpg">
+    <img id="feed" alt="thermal view" src="/api/thermal.mjpg">
     <div class="badge" id="badge">waiting for frames</div>
     <div class="waiting show" id="waiting">No thermal frames yet.<br>Check the camera connection.</div>
     <div class="readout">
@@ -86,6 +96,7 @@
       <div class="max"><span>MAX</span><b id="tmax">–</b></div>
     </div>
     <div id="hot"></div>
+    <div id="sel"></div>
   </section>
 
   <aside>
@@ -96,20 +107,31 @@
 
     <div class="card">
       <h2>Bands</h2>
-      <label class="f">Clip low <input id="clipLo" type="number" step="0.5" placeholder="off"> <span class="hint">shown</span></label>
-      <label class="f">Clip high <input id="clipHi" type="number" step="0.5" placeholder="off"> <span class="hint">shown</span></label>
-      <label class="f">Span low <input id="spanLo" type="number" step="0.5" placeholder="auto"> <span class="hint">colour</span></label>
-      <label class="f">Span high <input id="spanHi" type="number" step="0.5" placeholder="auto"> <span class="hint">colour</span></label>
-      <div class="row" style="margin-top:11px">
-        <button id="apply">Apply</button>
-        <button id="reset">Reset</button>
-      </div>
-      <div class="src" id="bandState" style="margin-top:8px"></div>
+      <label class="f">Clip low <input id="clipLo" type="number" step="0.5" placeholder="off"><span class="hint">shown</span></label>
+      <label class="f">Clip high <input id="clipHi" type="number" step="0.5" placeholder="off"><span class="hint">shown</span></label>
+      <label class="f">Span low <input id="spanLo" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
+      <label class="f">Span high <input id="spanHi" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
+      <div class="row" style="margin-top:9px"><button id="apply">Apply</button><button id="reset">Reset</button></div>
+      <div class="hint" id="bandState"></div>
+    </div>
+
+    <div class="card">
+      <h2>Measure</h2>
+      <div class="hint" style="margin:0">Click a point, or drag a box on the thermal view.</div>
+      <div class="kv" id="measure" style="margin-top:8px"><span>–</span><span>no measurement</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Calibration</h2>
+      <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
+      <label class="f">Offset <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
+      <div class="row" style="margin-top:9px"><button id="calApply">Apply</button><button id="calFactory">Factory</button></div>
+      <div class="hint" id="calState"></div>
     </div>
 
     <div class="card">
       <h2>Hot spots</h2>
-      <ul class="peaks" id="peaks"><li><span>—</span><span></span></li></ul>
+      <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
 
     <div class="card">
@@ -121,24 +143,30 @@
         <span>Frame</span><span id="seq">–</span>
         <span>Link</span><span id="link">–</span>
       </div>
-      <div class="row" style="margin-top:11px">
-        <a class="btn" id="snap" href="/api/thermal.jpg" download="thermolink.jpg">Save JPEG</a>
-        <a class="btn" href="/api/spec" target="_blank" rel="noreferrer">Spec JSON</a>
-      </div>
+      <div class="hint" id="snapState"></div>
+      <div class="snaps" id="snaps"></div>
     </div>
   </aside>
 </main>
 
-<footer>ThermoLink · frames are rendered server-side from 16-bit radiometric data · <span id="foot">—</span></footer>
+<footer>ThermoLink · 16-bit radiometric data rendered server-side · <span id="foot">—</span></footer>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { unit: "C", display: null, initialized: false, palettes: [] };
+const state = { unit: "C", display: null, initialized: false, palettes: [], mode: "thermal", w: 160, h: 120 };
 
 function fmt(c) {
   if (c === null || c === undefined || Number.isNaN(c)) return "–";
   const v = state.unit === "F" ? c * 9 / 5 + 32 : c;
   return v.toFixed(1) + "°" + state.unit;
+}
+
+for (const b of $("modes").children) {
+  b.onclick = () => {
+    state.mode = b.dataset.mode;
+    for (const x of $("modes").children) x.classList.toggle("active", x === b);
+    $("viewer").className = "viewer " + state.mode;
+  };
 }
 
 function paintPalettes(list, current) {
@@ -148,8 +176,7 @@ function paintPalettes(list, current) {
     $("pals").innerHTML = "";
     for (const name of list) {
       const b = document.createElement("button");
-      b.textContent = name;
-      b.dataset.pal = name;
+      b.textContent = name; b.dataset.pal = name;
       b.onclick = () => setDisplay({ palette: name });
       $("pals").appendChild(b);
     }
@@ -159,38 +186,18 @@ function paintPalettes(list, current) {
 
 async function setDisplay(patch) {
   const next = Object.assign({}, state.display || {}, patch);
-  const r = await fetch("/api/display", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(next)
-  });
+  const r = await fetch("/api/display", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
   if (r.ok) {
     state.display = await r.json();
     paintPalettes(state.palettes, state.display.palette);
     $("bandState").textContent = "applied";
     setTimeout(() => $("bandState").textContent = "", 1200);
-  } else {
-    $("bandState").textContent = "error: " + (await r.text());
-  }
+  } else $("bandState").textContent = "error: " + (await r.text());
 }
 
-function numOrNull(id) {
-  const v = $(id).value.trim();
-  if (v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-$("apply").onclick = () => setDisplay({
-  clip_lo: numOrNull("clipLo"), clip_hi: numOrNull("clipHi"),
-  span_lo: numOrNull("spanLo"), span_hi: numOrNull("spanHi")
-});
-
-$("reset").onclick = () => {
-  for (const id of ["clipLo", "clipHi", "spanLo", "spanHi"]) $(id).value = "";
-  setDisplay({ clip_lo: null, clip_hi: null, span_lo: null, span_hi: null });
-};
-
+const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Number($(id).value)) ? Number($(id).value) : null);
+$("apply").onclick = () => setDisplay({ clip_lo: numOrNull("clipLo"), clip_hi: numOrNull("clipHi"), span_lo: numOrNull("spanLo"), span_hi: numOrNull("spanHi") });
+$("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value = ""; setDisplay({ clip_lo:null, clip_hi:null, span_lo:null, span_hi:null }); };
 $("unit").onclick = () => {
   state.unit = state.unit === "C" ? "F" : "C";
   $("unitLabel").textContent = "°" + state.unit;
@@ -200,63 +207,133 @@ $("unit").onclick = () => {
 
 function fillDisplay(d) {
   if (!d) return;
-  state.display = d;
-  paintPalettes(state.palettes, d.palette);
-  const map = { clipLo: d.clip_lo, clipHi: d.clip_hi, spanLo: d.span_lo, spanHi: d.span_hi };
-  for (const [id, val] of Object.entries(map)) {
-    const el = $(id);
-    if (document.activeElement !== el) el.value = val === null ? "" : val;
-  }
+  state.display = d; paintPalettes(state.palettes, d.palette);
+  const map = { clipLo:d.clip_lo, clipHi:d.clip_hi, spanLo:d.span_lo, spanHi:d.span_hi };
+  for (const [id,val] of Object.entries(map)) { const el=$(id); if (document.activeElement!==el) el.value = val===null?"":val; }
 }
 
+// ---- measurement -------------------------------------------------------
+let drag = null;
+const viewer = $("viewer");
+function toThermal(e) {
+  const r = viewer.getBoundingClientRect();
+  const x = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width));
+  const y = Math.max(0, Math.min(0.999, (e.clientY - r.top) / r.height));
+  return [Math.floor(x * state.w), Math.floor(y * state.h)];
+}
+viewer.addEventListener("pointerdown", (e) => {
+  if (state.mode === "visible" || state.mode === "pip") return;
+  drag = toThermal(e);
+  const r = viewer.getBoundingClientRect();
+  $("sel").style.display = "block";
+  $("sel").style.left = (e.clientX - r.left) + "px";
+  $("sel").style.top = (e.clientY - r.top) + "px";
+  $("sel").style.width = "0px"; $("sel").style.height = "0px";
+  viewer.setPointerCapture(e.pointerId);
+});
+viewer.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const r = viewer.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const x0 = drag[0] / state.w * r.width, y0 = drag[1] / state.h * r.height;
+  $("sel").style.left = Math.min(x0, x) + "px";
+  $("sel").style.top = Math.min(y0, y) + "px";
+  $("sel").style.width = Math.abs(x - x0) + "px";
+  $("sel").style.height = Math.abs(y - y0) + "px";
+});
+viewer.addEventListener("pointerup", async (e) => {
+  if (!drag) return;
+  const start = drag; drag = null;
+  $("sel").style.display = "none";
+  const end = toThermal(e);
+  if (Math.abs(end[0]-start[0]) < 3 && Math.abs(end[1]-start[1]) < 3) {
+    const r = await fetch(`/api/point?x=${start[0]}&y=${start[1]}`);
+    if (r.ok) {
+      const d = await r.json();
+      $("measure").innerHTML = `<span>Point ${d.x},${d.y}</span><span>${fmt(d.c)}</span>`;
+    }
+  } else {
+    const r = await fetch("/api/region", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name:"box", pts:[start,end] }) });
+    if (r.ok) {
+      const d = await r.json();
+      $("measure").innerHTML =
+        `<span>Box ${d.x1-d.x0+1}×${d.y1-d.y0+1}</span><span>${d.n} px</span>` +
+        `<span>Min</span><span>${fmt(d.min_c)}</span>` +
+        `<span>Mean</span><span>${fmt(d.avg_c)}</span>` +
+        `<span>Max</span><span>${fmt(d.max_c)}</span>`;
+    }
+  }
+});
+
+// ---- calibration -------------------------------------------------------
+$("calApply").onclick = async () => {
+  const body = { scale: Number($("calScale").value), offset: Number($("calOffset").value) };
+  const r = await fetch("/api/calibration", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  $("calState").textContent = r.ok ? "applied" : "error: " + (await r.text());
+};
+$("calFactory").onclick = async () => {
+  await fetch("/api/calibration", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ scale:0.01, offset:0 }) });
+  $("calScale").value = 0.01; $("calOffset").value = 0; $("calState").textContent = "factory";
+};
+
+// ---- snapshots ---------------------------------------------------------
+$("snap").onclick = async () => {
+  $("snapState").textContent = "saving…";
+  const r = await fetch("/api/snapshot", { method:"POST" });
+  if (r.ok) { const d = await r.json(); $("snapState").textContent = "saved " + d.name; listSnaps(); }
+  else $("snapState").textContent = "error: " + (await r.text());
+};
+async function listSnaps() {
+  try {
+    const d = await (await fetch("/api/snapshots")).json();
+    $("snaps").innerHTML = (d.snapshots || []).slice(0,8).map(n => `<a href="/api/snapshots/${n}" target="_blank" rel="noreferrer">${n}</a>`).join("");
+  } catch (e) {}
+}
+
+// ---- poll --------------------------------------------------------------
 async function poll() {
   try {
-    const r = await fetch("/api/thermal.json", { cache: "no-store" });
-    const d = await r.json();
+    const d = await (await fetch("/api/thermal.json", { cache:"no-store" })).json();
     const connected = !!d.connected, ready = !!d.ready;
     $("dot").className = "dot" + (connected ? " on" : "");
     $("waiting").classList.toggle("show", !ready);
     $("badge").textContent = ready ? (connected ? "live" : "stale frame") : "waiting for frames";
-
     if (d.spec) {
       $("drv").textContent = d.spec.driver || "–";
       $("mdl").textContent = d.spec.model || "–";
       const t = d.spec.thermal;
       $("res").textContent = t ? `${t.width}×${t.height} · ${t.bit_depth}-bit` : "none";
+      if (t) { state.w = t.width; state.h = t.height; }
       $("source").textContent = `${d.spec.driver} · ${d.spec.model || ""}`;
     }
     $("seq").textContent = d.seq ?? "–";
     $("link").innerHTML = connected ? '<span class="ok">connected</span>' : '<span class="err">offline</span>';
     if (d.palettes) paintPalettes(d.palettes, (d.display || {}).palette);
     if (d.display && !state.initialized) { fillDisplay(d.display); state.initialized = true; }
-
+    if (d.calibration && document.activeElement !== $("calScale")) {
+      $("calScale").value = d.calibration.scale; $("calOffset").value = d.calibration.offset;
+    }
     if (!ready || !d.stats) return;
     const s = d.stats;
     $("tmin").textContent = fmt(s.min_c);
     $("tmean").textContent = fmt(s.mean_c);
     $("tmax").textContent = fmt(s.max_c);
-    const hot = $("hot"), viewer = $("viewer");
     if (s.hot && s.w && s.h) {
-      hot.style.display = "block";
-      hot.style.left = (s.hot[0] / s.w * 100) + "%";
-      hot.style.top = (s.hot[1] / s.h * 100) + "%";
-    } else hot.style.display = "none";
-
+      $("hot").style.display = "block";
+      $("hot").style.left = (s.hot[0] / s.w * 100) + "%";
+      $("hot").style.top = (s.hot[1] / s.h * 100) + "%";
+    }
     const peaks = d.peaks || [];
     $("peaks").innerHTML = peaks.length
-      ? peaks.map((p, i) => `<li><span>#${i + 1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
+      ? peaks.map((p,i) => `<li><span>#${i+1} · ${p.x},${p.y}</span><span>${fmt(p.c)}</span></li>`).join("")
       : "<li><span>no hot spots</span><span></span></li>";
-
-    if (!state.initialized) { fillDisplay(d.display); state.initialized = true; }
     $("foot").textContent = `seq ${d.seq} · ${s.w}×${s.h}`;
   } catch (e) {
     $("dot").className = "dot";
     $("link").innerHTML = '<span class="err">unreachable</span>';
   }
 }
-
-poll();
-setInterval(poll, 1000);
+poll(); setInterval(poll, 1000); listSnaps();
 </script>
 </body>
 </html>

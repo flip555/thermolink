@@ -1,19 +1,20 @@
 //! Qianli / Sunshine SuperCam ("Neptune") driver.
 //!
-//! One session uses four media sockets (two probe/hold, two streaming) and a
-//! few short-lived control sockets. The handshake is strictly sequential: the
-//! camera accepts connections out of order and then drops them silently, so
-//! every step below waits for its reply before the next one starts.
+//! The handshake replays the captured vendor sequence one packet at a time.
+//! That sequence is not optional decoration: it registers the client, probes
+//! both media values, negotiates formats, announces each stream flag and runs
+//! the settings probe. An abbreviated version is accepted politely and then
+//! produces no frames at all.
 //!
-//! The per-session flag is the whole trick. It arrives in the probe reply and
-//! must be echoed in START and CTRL; replaying a stale flag produces a polite
-//! handshake and a stream that closes after a second or two with zero frames.
+//! The only runtime substitution is the per-session flag from each probe reply.
 
+pub mod handshake;
 pub mod protocol;
 pub mod thermal;
 
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -33,7 +34,6 @@ use thermal::{ThermalAssembler, HEIGHT, WIDTH};
 pub const DRIVER_ID: &str = "qianli";
 const KEEPALIVE_EVERY: Duration = Duration::from_secs(10);
 const SILENCE_TIMEOUT: Duration = Duration::from_secs(20);
-const HANDSHAKE_STEP_PAUSE: Duration = Duration::from_millis(25);
 
 pub struct QianliDriver {
     host: Ipv4Addr,
@@ -95,58 +95,85 @@ impl CameraDriver for QianliDriver {
     }
 
     async fn open(&self) -> Result<Box<dyn CameraSession>> {
-        // 1. Client registration: two commands, two flags each, one connection
-        //    apiece. The captured vendor client never reuses these sockets.
-        for (cmd, flags) in [(0x65u64, 0u64), (0x65, 1), (0x66, 0), (0x66, 1)] {
-            let mut s = connect(self.host, self.control_port).await?;
-            s.write_all(&p::register(cmd, flags)).await?;
-            drain(&mut s, Duration::from_millis(120)).await;
-            s.shutdown().await.ok();
-            sleep(HANDSHAKE_STEP_PAUSE).await;
+        let mut socks: HashMap<u16, TcpStream> = HashMap::new();
+        let mut flags: [Option<[u8; 4]>; 2] = [None, None];
+        let started = Instant::now();
+
+        for step in handshake::STEPS {
+            let due = started + Duration::from_millis(step.at_ms as u64);
+            let now = Instant::now();
+            if due > now {
+                sleep(due - now).await;
+            }
+
+            if !socks.contains_key(&step.key) {
+                let port = if step.port == self.control_port || step.port == self.media_port {
+                    step.port
+                } else {
+                    // The capture always uses 3000/3001; keep the configured
+                    // ports for cameras on non-default ones.
+                    if step.port == 3001 {
+                        self.control_port
+                    } else {
+                        self.media_port
+                    }
+                };
+                let s = connect(self.host, port).await?;
+                socks.insert(step.key, s);
+            }
+
+            let mut packet = decode_hex(step.hex)?;
+            apply_flag(&mut packet, &flags);
+            let stream = socks
+                .get_mut(&step.key)
+                .expect("socket inserted above");
+
+            if let Err(e) = stream.write_all(&packet).await {
+                bail!("handshake write failed at {}ms: {e}", step.at_ms);
+            }
+
+            // The probe reply only arrives after the 40-byte serial packet on
+            // the same socket, so flags are collected once both serial packets
+            // have gone out — never between probe and serial, which deadlocks.
+            if packet.len() == 40 && step.key == handshake::PROBE_THERMAL {
+                let f0 = read_flag(
+                    socks
+                        .get_mut(&handshake::PROBE_VISIBLE)
+                        .expect("probe socket present"),
+                )
+                .await
+                .context("visible probe")?;
+                let f1 = read_flag(
+                    socks
+                        .get_mut(&handshake::PROBE_THERMAL)
+                        .expect("probe socket present"),
+                )
+                .await
+                .context("thermal probe")?;
+                tracing::debug!(
+                    visible = %hex(&f0),
+                    thermal = %hex(&f1),
+                    "session flags acquired"
+                );
+                flags = [Some(f0), Some(f1)];
+            }
         }
 
-        // 2. Probe each value on its own media connection. The reply carries
-        //    the live session flag; nothing else in the protocol does.
-        let mut probe0 = connect(self.host, self.media_port).await?;
-        probe0.write_all(&p::probe(self.host, self.media_port, 0)).await?;
-        probe0.write_all(&p::serial_packet()).await?;
-        let flag0 = read_flag(&mut probe0).await.context("visible probe")?;
+        let flag0 = flags[0].context("camera never supplied a visible session flag")?;
+        let flag1 = flags[1].context("camera never supplied a thermal session flag")?;
 
-        let mut probe1 = connect(self.host, self.media_port).await?;
-        probe1.write_all(&p::probe(self.host, self.media_port, 1)).await?;
-        probe1.write_all(&p::serial_packet()).await?;
-        let flag1 = read_flag(&mut probe1).await.context("thermal probe")?;
-        sleep(HANDSHAKE_STEP_PAUSE).await;
-
-        // 3. Streaming sockets are separate from the probe sockets: INIT binds
-        //    a value, START (carrying the live flag) actually opens the tap.
-        let mut visible = connect(self.host, self.media_port).await?;
-        visible.write_all(&p::init(0, 8)).await?;
-        visible.write_all(&p::start(flag0, 1)).await?;
-
-        let mut thermal = connect(self.host, self.media_port).await?;
-        thermal.write_all(&p::init(1, 8)).await?;
-        thermal.write_all(&p::start(flag1, 1)).await?;
-        sleep(HANDSHAKE_STEP_PAUSE).await;
-
-        // 4. Announce each flag on its own control connection, then run the
-        //    type-0x14 handshake on the probe socket that owns it.
-        let mut ctl_thermal = connect(self.host, self.control_port).await?;
-        ctl_thermal.write_all(&p::register(0x78, 1)).await?;
-        drain(&mut ctl_thermal, Duration::from_millis(100)).await;
-        ctl_thermal
-            .write_all(&p::ctrl(4, flag1, self.media_port))
-            .await?;
-        probe1.write_all(&p::type14(1)).await?;
-        sleep(HANDSHAKE_STEP_PAUSE).await;
-
-        let mut ctl_visible = connect(self.host, self.control_port).await?;
-        ctl_visible.write_all(&p::register(0x78, 0)).await?;
-        drain(&mut ctl_visible, Duration::from_millis(100)).await;
-        ctl_visible
-            .write_all(&p::ctrl(2, flag0, self.media_port))
-            .await?;
-        probe0.write_all(&p::type14(0)).await?;
+        let visible = socks
+            .remove(&handshake::VIDEO_VISIBLE)
+            .context("visible video socket missing")?;
+        let thermal = socks
+            .remove(&handshake::VIDEO_THERMAL)
+            .context("thermal video socket missing")?;
+        let probe0 = socks
+            .remove(&handshake::PROBE_VISIBLE)
+            .context("visible probe socket missing")?;
+        let probe1 = socks
+            .remove(&handshake::PROBE_THERMAL)
+            .context("thermal probe socket missing")?;
 
         let mut keepalive = interval(KEEPALIVE_EVERY);
         keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -156,6 +183,7 @@ impl CameraDriver for QianliDriver {
             host = %self.host,
             visible_flag = %hex(&flag0),
             thermal_flag = %hex(&flag1),
+            controls = socks.len(),
             "qianli handshake complete"
         );
 
@@ -165,7 +193,7 @@ impl CameraDriver for QianliDriver {
             thermal,
             probe0,
             probe1,
-            _control: vec![ctl_visible, ctl_thermal],
+            _control: socks.into_values().collect(),
             assembler: ThermalAssembler::new(),
             seq: 0,
             keepalive,
@@ -288,19 +316,42 @@ async fn connect(host: Ipv4Addr, port: u16) -> Result<TcpStream> {
     Ok(s)
 }
 
-/// Read briefly and discard, so replies cannot be mis-attributed to the next
-/// step. Deliberately bounded: the camera may keep the socket open.
-async fn drain(s: &mut TcpStream, wait: Duration) {
-    let mut buf = [0u8; 512];
-    let _ = timeout(wait, async {
-        loop {
-            match s.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
+fn decode_hex(s: &str) -> Result<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        bail!("odd-length hex packet");
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).context("bad hex packet"))
+        .collect()
+}
+
+/// Replace the captured placeholder flag with the live one.
+///
+/// START is 8 bytes and carries `0x33` (visible) or `0x35` (thermal) as its
+/// placeholder. CTRL is 16 bytes: value 2 = visible, value 4 = thermal, and the
+/// flag sits at bytes 8..12.
+fn apply_flag(packet: &mut [u8], flags: &[Option<[u8; 4]>; 2]) {
+    if packet.len() == 8 {
+        let live = match packet[0] {
+            0x33 => flags[0],
+            0x35 => flags[1],
+            _ => None,
+        };
+        if let Some(flag) = live {
+            packet[..4].copy_from_slice(&flag);
         }
-    })
-    .await;
+    } else if packet.len() == 16 {
+        let value = u32::from_le_bytes(packet[4..8].try_into().unwrap());
+        let live = match value {
+            2 => flags[0],
+            4 => flags[1],
+            _ => None,
+        };
+        if let Some(flag) = live {
+            packet[8..12].copy_from_slice(&flag);
+        }
+    }
 }
 
 /// Scan a probe reply for the `01 00` marker at 28..30, then take the flag from
