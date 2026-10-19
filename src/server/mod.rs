@@ -2591,7 +2591,7 @@ async fn reanalyze_json(
         "calibration": img.calibration,
         "display": display,
         "regions": regions,
-        "peaks": peaks,
+        "peaks": peaks.iter().map(|p| json!({"x": p.x, "y": p.y, "c": p.celsius})).collect::<Vec<_>>(),
         "has_video": has_video,
     })))
 }

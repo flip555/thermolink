@@ -1258,7 +1258,7 @@ async function openReanalysis(name) {
     const vis = $("vis");
     if (state.reanalysisVideo) {
       vis.style.display = "block";
-      vis.src = withToken("/api/snapshots/" + encodeURIComponent(name) + ".vis&t=" + Date.now());
+      vis.src = withToken("/api/snapshots/" + encodeURIComponent(name) + ".vis?t=" + Date.now());
       state.visStarted = true;
     } else {
       vis.removeAttribute("src"); vis.style.display = "none"; state.visStarted = false;
