@@ -460,6 +460,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/captures/{name}", get(capture_file))
         .route("/api/calibration", get(get_calibration).post(set_calibration))
         .route("/api/camera/settings", get(camera_settings))
+        .route("/api/camera/reboot", post(camera_reboot))
         .route("/api/discover", get(discover))
         .route("/api/snapshot", post(snapshot))
         .route("/api/snapshots", get(list_snapshots))
@@ -1164,6 +1165,28 @@ async fn dt_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
 struct CalibrationFile {
     scale: f32,
     offset: f32,
+}
+
+#[derive(Deserialize)]
+struct ConfirmRequest {
+    confirm: String,
+}
+
+async fn camera_reboot(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<ConfirmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.confirm != "reboot" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "send {\"confirm\":\"reboot\"} to confirm".into(),
+        ));
+    }
+    st.driver
+        .reboot()
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
 }
 
 async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {

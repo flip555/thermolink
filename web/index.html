@@ -279,6 +279,7 @@
       <h2>Camera settings</h2>
       <div class="row"><button id="camRead">Read from camera</button></div>
       <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span>not read</span></div>
+      <div class="row" style="margin-top:8px"><button id="camReboot">Reboot camera</button></div>
       <h2>Calibration</h2>
       <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
       <label class="f">Offset <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
@@ -736,6 +737,12 @@ $("prSave").onclick = async () => {
   const body = { enabled: $("prEnabled").checked, before_s: Number($("prBefore").value) || 0, after_s: Number($("prAfter").value) || 0 };
   const r = await fetch("/api/prerecord", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
   $("prState").textContent = r.ok ? "saved" : "error: " + (await r.text());
+};
+
+$("camReboot").onclick = async () => {
+  if (!confirm("Reboot the camera? It will drop for about 30 seconds.")) return;
+  const r = await fetch("/api/camera/reboot", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ confirm:"reboot" }) });
+  alert(r.ok ? "Reboot command sent." : "Error: " + (await r.text()));
 };
 
 // ---------- capture / reference ----------

@@ -267,6 +267,11 @@ pub trait CameraDriver: Send + Sync {
     async fn read_settings(&self) -> Result<Option<serde_json::Value>> {
         Ok(None)
     }
+
+    /// Restart the camera so stored settings take effect.
+    async fn reboot(&self) -> Result<serde_json::Value> {
+        anyhow::bail!("reboot is not supported by this driver")
+    }
 }
 
 /// A live connection. `next_frame` must be cancellation-safe and should fail

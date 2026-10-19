@@ -10,6 +10,7 @@
 
 pub mod handshake;
 pub mod protocol;
+pub mod reboot;
 pub mod settings;
 pub mod thermal;
 
@@ -93,6 +94,10 @@ impl CameraDriver for QianliDriver {
 
     fn spec(&self) -> CameraSpec {
         self.spec_with(self.calibration)
+    }
+
+    async fn reboot(&self) -> Result<serde_json::Value> {
+        reboot::reboot(self.host).await
     }
 
     async fn read_settings(&self) -> Result<Option<serde_json::Value>> {
