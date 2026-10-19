@@ -104,6 +104,10 @@ pub struct Reference {
     pub name: String,
     pub at: u64,
     pub vals: Vec<u16>,
+    /// Calibration at capture time. Older files omit it; callers then fall
+    /// back to the live calibration.
+    #[serde(default)]
+    pub calibration: Option<Calibration>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -705,7 +709,14 @@ async fn index() -> Html<&'static str> {
 }
 
 async fn spec(State(st): State<Arc<AppState>>) -> Json<CameraSpec> {
-    Json(st.spec.clone())
+    // The live calibration can change at runtime; a static copy of the boot
+    // spec would keep advertising the old value to API clients.
+    let mut spec = st.spec.clone();
+    let calibration = *st.calibration.read().await;
+    if let Some(thermal) = spec.thermal.as_mut() {
+        thermal.calibration = calibration;
+    }
+    Json(spec)
 }
 
 async fn health(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -786,6 +797,7 @@ struct DisplayPatch {
     clip_hi: Option<Option<f32>>,
     span_lo: Option<Option<f32>>,
     span_hi: Option<Option<f32>>,
+    dt_span: Option<f32>,
     iso_bands: Option<Vec<IsoBand>>,
 }
 
@@ -804,6 +816,12 @@ async fn set_display(
     if let Some(v) = patch.clip_hi { next.clip_hi = v; }
     if let Some(v) = patch.span_lo { next.span_lo = v; }
     if let Some(v) = patch.span_hi { next.span_hi = v; }
+    if let Some(v) = patch.dt_span {
+        if !(0.5..=50.0).contains(&v) {
+            return Err((StatusCode::BAD_REQUEST, "dt_span must be between 0.5 and 50 C".into()));
+        }
+        next.dt_span = v;
+    }
     if let Some(v) = patch.iso_bands { next.iso_bands = v; }
     *st.display.write().await = next.clone();
     st.persist_display().await;
@@ -1164,6 +1182,7 @@ async fn add_reference(
         name,
         at: now_secs(),
         vals: vals.clone(),
+        calibration: Some(img.calibration),
     };
     st.references.write().await.push(reference.clone());
     *st.reference.write().await = Some(vals);
@@ -1210,57 +1229,161 @@ async fn clear_references(State(st): State<Arc<AppState>>) -> Json<serde_json::V
     Json(json!({ "ok": true }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct CompareQuery {
-    name: String,
+    #[serde(default)]
+    name: Option<String>,
+    /// First named reference for an A/B difference.
+    #[serde(default)]
+    a: Option<String>,
+    /// Second named reference for an A/B difference.
+    #[serde(default)]
+    b: Option<String>,
+    /// Difference-view half-range in °C.
+    #[serde(default)]
+    span: Option<f32>,
 }
 
-async fn compare_json(
-    State(st): State<Arc<AppState>>,
-    Query(q): Query<CompareQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let snap = load_snapshot(&st, &q.name)?;
-    let cur = st
-        .thermal_image()
-        .await
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
-    let snap_vals: Vec<u16> = snap.values().collect();
+fn checked_span(
+    requested: Option<f32>,
+    fallback: f32,
+) -> Result<f32, (StatusCode, String)> {
+    let span = requested.unwrap_or(fallback);
+    if !span.is_finite() || !(0.5..=50.0).contains(&span) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "span must be between 0.5 and 50 C".into(),
+        ));
+    }
+    Ok(span)
+}
+
+fn thermal_dims(st: &AppState) -> (u32, u32) {
+    st.spec
+        .thermal
+        .as_ref()
+        .map(|t| (t.width, t.height))
+        .unwrap_or((0, 0))
+}
+
+/// Rebuild a radiometric image from a saved reference.
+fn reference_image(
+    reference: &Reference,
+    fallback: Calibration,
+    width: u32,
+    height: u32,
+) -> ThermalImage {
+    let mut raw = Vec::with_capacity(reference.vals.len() * 2);
+    for v in &reference.vals {
+        raw.extend_from_slice(&v.to_le_bytes());
+    }
+    ThermalImage {
+        width,
+        height,
+        raw: Bytes::from(raw),
+        calibration: reference.calibration.unwrap_or(fallback),
+    }
+}
+
+fn find_reference(list: &[Reference], id: &str) -> Result<Reference, (StatusCode, String)> {
+    list.iter()
+        .find(|r| r.id == id)
+        .cloned()
+        .ok_or((StatusCode::NOT_FOUND, format!("no such reference {id:?}")))
+}
+
+fn diff_stats(label: &str, img: &ThermalImage, other: &ThermalImage) -> serde_json::Value {
     let mut min = f32::MAX;
     let mut max = f32::MIN;
     let mut sum = 0.0;
     let mut n = 0u32;
     let mut hot = (0u32, 0u32);
     let mut hot_abs = f32::MIN;
-    for (i, a) in cur.values().enumerate() {
-        let Some(&b) = snap_vals.get(i) else { break };
-        let ta = a as f32 * cur.calibration.scale + cur.calibration.offset;
-        let tb = b as f32 * snap.calibration.scale + snap.calibration.offset;
+    let other_vals: Vec<u16> = other.values().collect();
+    for (i, a) in img.values().enumerate() {
+        let Some(&b) = other_vals.get(i) else { break };
+        let ta = a as f32 * img.calibration.scale + img.calibration.offset;
+        let tb = b as f32 * other.calibration.scale + other.calibration.offset;
         let d = ta - tb;
         if d.abs() > hot_abs {
             hot_abs = d.abs();
-            hot = ((i as u32) % cur.width, (i as u32) / cur.width);
+            hot = ((i as u32) % img.width.max(1), (i as u32) / img.width.max(1));
         }
         min = min.min(d);
         max = max.max(d);
         sum += d;
         n += 1;
     }
-    Ok(Json(json!({
-        "name": q.name,
+    json!({
+        "name": label,
         "ready": n > 0,
         "min_c": round2(if n > 0 { min } else { 0.0 }),
         "max_c": round2(if n > 0 { max } else { 0.0 }),
         "avg_c": round2(if n > 0 { sum / n as f32 } else { 0.0 }),
         "n": n,
         "max_at": [hot.0, hot.1],
-    })))
+    })
+}
+
+async fn compare_json(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<CompareQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if let (Some(a), Some(b)) = (&q.a, &q.b) {
+        let list = st.references.read().await.clone();
+        let ra = find_reference(&list, a)?;
+        let rb = find_reference(&list, b)?;
+        let fallback = *st.calibration.read().await;
+        let (w, h) = thermal_dims(&st);
+        let ia = reference_image(&ra, fallback, w, h);
+        let ib = reference_image(&rb, fallback, w, h);
+        return Ok(Json(diff_stats(&format!("{} vs {}", ra.name, rb.name), &ia, &ib)));
+    }
+    let Some(name) = q.name else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "compare needs name, or both a and b".into(),
+        ));
+    };
+    let snap = load_snapshot(&st, &name)?;
+    let cur = st
+        .thermal_image()
+        .await
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    Ok(Json(diff_stats(&name, &cur, &snap)))
 }
 
 async fn compare_jpg(
     State(st): State<Arc<AppState>>,
     Query(q): Query<CompareQuery>,
 ) -> Response {
-    let snap = match load_snapshot(&st, &q.name) {
+    let display = st.display.read().await.clone();
+    let span = match checked_span(q.span, display.dt_span) {
+        Ok(v) => v,
+        Err((code, msg)) => return (code, msg).into_response(),
+    };
+    if let (Some(a), Some(b)) = (&q.a, &q.b) {
+        let list = st.references.read().await.clone();
+        let ra = match find_reference(&list, a) {
+            Ok(r) => r,
+            Err((code, msg)) => return (code, msg).into_response(),
+        };
+        let rb = match find_reference(&list, b) {
+            Ok(r) => r,
+            Err((code, msg)) => return (code, msg).into_response(),
+        };
+        let fallback = *st.calibration.read().await;
+        let (w, h) = thermal_dims(&st);
+        let ia = reference_image(&ra, fallback, w, h);
+        return match dt_jpeg(&ia, &rb.vals, span, 85) {
+            Ok(jpeg) => jpeg_response(jpeg),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
+    }
+    let Some(name) = q.name else {
+        return (StatusCode::BAD_REQUEST, "compare needs name, or both a and b").into_response();
+    };
+    let snap = match load_snapshot(&st, &name) {
         Ok(s) => s,
         Err((code, msg)) => return (code, msg).into_response(),
     };
@@ -1268,17 +1391,28 @@ async fn compare_jpg(
         return (StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet").into_response();
     };
     let vals: Vec<u16> = snap.values().collect();
-    match dt_jpeg(&cur, &vals, 5.0, 85) {
+    match dt_jpeg(&cur, &vals, span, 85) {
         Ok(jpeg) => jpeg_response(jpeg),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-async fn set_reference(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+async fn set_reference(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<CompareQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let img = st
         .thermal_image()
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet".into()))?;
+    if q.span.is_some() {
+        let display = st.display.read().await.clone();
+        let span = checked_span(q.span, display.dt_span)?;
+        let mut next = display;
+        next.dt_span = span;
+        *st.display.write().await = next;
+        st.persist_display().await;
+    }
     let vals: Vec<u16> = img.values().collect();
     *st.reference.write().await = Some(vals);
     *st.active_ref.write().await = None;
@@ -1293,20 +1427,59 @@ async fn clear_reference(State(st): State<Arc<AppState>>) -> Json<serde_json::Va
     Json(json!({ "ok": true }))
 }
 
-async fn dt_image(State(st): State<Arc<AppState>>) -> Response {
+async fn dt_image(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>) -> Response {
+    let display = st.display.read().await.clone();
+    let span = match checked_span(q.span, display.dt_span) {
+        Ok(v) => v,
+        Err((code, msg)) => return (code, msg).into_response(),
+    };
+    if let (Some(a), Some(b)) = (&q.a, &q.b) {
+        let list = st.references.read().await.clone();
+        let ra = match find_reference(&list, a) {
+            Ok(r) => r,
+            Err((code, msg)) => return (code, msg).into_response(),
+        };
+        let rb = match find_reference(&list, b) {
+            Ok(r) => r,
+            Err((code, msg)) => return (code, msg).into_response(),
+        };
+        let fallback = *st.calibration.read().await;
+        let (w, h) = thermal_dims(&st);
+        let ia = reference_image(&ra, fallback, w, h);
+        return match dt_jpeg(&ia, &rb.vals, span, 85) {
+            Ok(jpeg) => jpeg_response(jpeg),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
+    }
     let Some(img) = st.thermal_image().await else {
         return (StatusCode::SERVICE_UNAVAILABLE, "no thermal frame yet").into_response();
     };
     let Some(reference) = st.reference.read().await.clone() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "no reference frame").into_response();
     };
-    match dt_jpeg(&img, &reference, 5.0, 85) {
+    match dt_jpeg(&img, &reference, span, 85) {
         Ok(jpeg) => jpeg_response(jpeg),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-async fn dt_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn dt_json(State(st): State<Arc<AppState>>, Query(q): Query<CompareQuery>) -> Json<serde_json::Value> {
+    if let (Some(a), Some(b)) = (&q.a, &q.b) {
+        let list = st.references.read().await.clone();
+        let (Ok(ra), Ok(rb)) = (find_reference(&list, a), find_reference(&list, b)) else {
+            return Json(json!({ "ready": false, "error": "no such reference" }));
+        };
+        let fallback = *st.calibration.read().await;
+        let (w, h) = thermal_dims(&st);
+        let ia = reference_image(&ra, fallback, w, h);
+        let ib = reference_image(&rb, fallback, w, h);
+        let mut out = diff_stats(&format!("{} vs {}", ra.name, rb.name), &ia, &ib);
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("a".into(), json!(ra.id));
+            obj.insert("b".into(), json!(rb.id));
+        }
+        return Json(out);
+    }
     let img = st.thermal_image().await;
     let reference = st.reference.read().await.clone();
     let (Some(img), Some(reference)) = (img, reference) else {
@@ -1424,6 +1597,12 @@ async fn set_calibration(
     State(st): State<Arc<AppState>>,
     Json(req): Json<CalibrationRequest>,
 ) -> Result<Json<Calibration>, (StatusCode, String)> {
+    if req.points.is_none() && req.scale.is_none() && req.offset.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "calibration needs points, scale or offset".into(),
+        ));
+    }
     let next = if let Some(points) = req.points {
         Calibration::fit([
             (points[0][0] as u16, points[0][1]),
@@ -1431,9 +1610,12 @@ async fn set_calibration(
         ])
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
     } else {
+        // Fill an omitted half from the current calibration instead of
+        // silently reverting it to the factory default.
+        let current = *st.calibration.read().await;
         Calibration {
-            scale: req.scale.unwrap_or(0.01),
-            offset: req.offset.unwrap_or(0.0),
+            scale: req.scale.unwrap_or(current.scale),
+            offset: req.offset.unwrap_or(current.offset),
         }
     };
     if !(0.0001..=1.0).contains(&next.scale.abs()) || !(-200.0..=200.0).contains(&next.offset) {

@@ -21,6 +21,9 @@ pub struct DisplaySettings {
     pub clip_hi: Option<f32>,
     pub span_lo: Option<f32>,
     pub span_hi: Option<f32>,
+    /// Half-range of the difference view, in °C. Configurable like the
+    /// original relay's `_dt_span`.
+    pub dt_span: f32,
     #[serde(default = "default_iso_bands")]
     pub iso_bands: Vec<IsoBand>,
 }
@@ -30,6 +33,10 @@ pub struct IsoBand {
     pub lo: f32,
     pub hi: f32,
     pub colour: String,
+}
+
+pub fn default_dt_span() -> f32 {
+    5.0
 }
 
 fn default_iso_bands() -> Vec<IsoBand> {
@@ -60,6 +67,7 @@ impl Default for DisplaySettings {
             clip_hi: None,
             span_lo: None,
             span_hi: None,
+            dt_span: default_dt_span(),
             iso_bands: default_iso_bands(),
         }
     }

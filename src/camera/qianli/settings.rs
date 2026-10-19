@@ -74,7 +74,7 @@ mod tests {
         let mut blob = vec![0u8; ECHO_LEN + BLOCK_LEN];
         blob[ECHO_LEN..ECHO_LEN + 9].copy_from_slice(b"SuperCam\0");
         blob[ECHO_LEN + 24..ECHO_LEN + 36].copy_from_slice(b"192.168.1.64");
-        blob[ECHO_LEN + 40..ECHO_LEN + 50].copy_from_slice(b"255.255.255\0");
+        blob[ECHO_LEN + 40..ECHO_LEN + 52].copy_from_slice(b"255.255.255\0");
         let v = parse(&blob).expect("block");
         assert_eq!(v["name"], "SuperCam");
         assert_eq!(v["ip"], "192.168.1.64");

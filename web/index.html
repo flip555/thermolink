@@ -271,6 +271,8 @@
       <ul class="list" id="refList"><li><span class="grow">No references</span></li></ul>
       <h2>Difference (ΔT)</h2>
       <div class="row"><button id="setRef">Set reference</button><button id="clearRef">Clear</button></div>
+      <label class="f">Span ± <input id="dtSpan" type="number" min="0.5" max="50" step="0.5" style="width:70px"><span class="hint">°C</span></label>
+      <div class="row" style="margin-top:8px"><select id="cmpA" title="reference A"></select><span class="hint">vs</span><select id="cmpB" title="reference B"></select><a class="hint" id="cmpLink" href="#" target="_blank" rel="noreferrer">compare A/B</a></div>
       <label class="f"><input type="checkbox" id="dtToggle" style="width:auto"> Show ΔT image</label>
       <div class="kv" id="dtStats" style="margin-top:8px"><span>ΔT</span><span>no reference</span></div>
     </div>
@@ -544,6 +546,7 @@ function fillDisplay(d) {
   state.display = d; paintPalettes(state.palettes, d.palette);
   const map = {clipLo:d.clip_lo, clipHi:d.clip_hi, spanLo:d.span_lo, spanHi:d.span_hi};
   for (const [id,val] of Object.entries(map)) { const el=$(id); if (document.activeElement!==el) el.value = val===null?"":val; }
+  if (document.activeElement !== $("dtSpan")) $("dtSpan").value = d.dt_span ?? 5;
   if (d.iso_bands) renderIsoBands(d.iso_bands);
 }
 
@@ -786,8 +789,32 @@ async function loadReferences() {
       b.onclick = async () => { await fetch("/api/references/"+b.dataset.act+"/activate",{method:"POST"}); loadReferences(); refreshDt(); };
     for (const b of $("refList").querySelectorAll("button[data-del]"))
       b.onclick = async () => { await fetch("/api/references/"+b.dataset.del,{method:"DELETE"}); loadReferences(); };
+    for (const id of ["cmpA","cmpB"]) {
+      const sel = $(id), keep = sel.value;
+      sel.innerHTML = list.map(r => `<option value="${r.id}">${r.name}</option>`).join("");
+      if (list.some(r => r.id === keep)) sel.value = keep;
+    }
+    if (list.length > 1 && $("cmpB").value === $("cmpA").value) {
+      const other = list.find(r => r.id !== $("cmpA").value);
+      if (other) $("cmpB").value = other.id;
+    }
+    updateCmpLink();
   } catch(e) {}
 }
+function updateCmpLink() {
+  const a = $("cmpA").value, b = $("cmpB").value;
+  const link = $("cmpLink");
+  if (!a || !b || a === b) { link.removeAttribute("href"); link.style.opacity = ".45"; return; }
+  link.href = `/api/compare.jpg?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`;
+  link.style.opacity = "1";
+}
+$("cmpA").onchange = $("cmpB").onchange = updateCmpLink;
+$("dtSpan").onchange = async () => {
+  const span = Number($("dtSpan").value);
+  const r = await fetch("/api/display",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dt_span:span})});
+  if (!r.ok) { $("dtStats").innerHTML = "<span>ΔT</span><span>bad span</span>"; return; }
+  refreshDt();
+};
 $("refSave").onclick = async () => {
   const r = await fetch("/api/references",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("refName").value})});
   if (r.ok) { $("refName").value = ""; loadReferences(); refreshDt(); }

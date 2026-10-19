@@ -228,6 +228,8 @@ impl CameraDriver for QianliDriver {
             assembler: ThermalAssembler::new(),
             seq: 0,
             keepalive,
+            last_visible: Instant::now(),
+            last_thermal: Instant::now(),
         }))
     }
 }
@@ -244,6 +246,10 @@ struct QianliSession {
     assembler: ThermalAssembler,
     seq: u64,
     keepalive: tokio::time::Interval,
+    /// Wall clock of the last frame from each stream. They are tracked
+    /// separately so a live visible feed cannot mask a stalled thermal one.
+    last_visible: Instant,
+    last_thermal: Instant,
 }
 
 #[async_trait]
@@ -263,6 +269,16 @@ impl CameraSession for QianliSession {
         let mut tbuf = vec![0u8; 64 * 1024];
 
         loop {
+            // Per-stream deadlines, not one timeout reset by any traffic:
+            // visible frames arrive continuously and used to keep the
+            // thermal stream's silence from ever being noticed.
+            let now = Instant::now();
+            let thermal_deadline = self.last_thermal + SILENCE_TIMEOUT;
+            let visible_deadline = self.last_visible + SILENCE_TIMEOUT;
+            let wait = thermal_deadline
+                .min(visible_deadline)
+                .saturating_duration_since(now);
+
             let Self {
                 visible,
                 thermal,
@@ -276,19 +292,19 @@ impl CameraSession for QianliSession {
             let mut keepalive_due = false;
             let mut stalled = false;
 
-            tokio::select! {
+            let frame = tokio::select! {
                 r = visible.read(&mut vbuf) => {
                     let n = r.context("visible stream read failed")?;
                     if n == 0 {
                         bail!("camera closed the visible stream");
                     }
                     *seq += 1;
-                    return Ok(CameraFrame {
+                    Some(CameraFrame {
                         stream: StreamKind::Visible,
                         seq: *seq,
                         at: std::time::Instant::now(),
                         payload: FramePayload::Video(Bytes::copy_from_slice(&vbuf[..n])),
-                    });
+                    })
                 }
                 r = thermal.read(&mut tbuf) => {
                     let n = r.context("thermal stream read failed")?;
@@ -297,7 +313,7 @@ impl CameraSession for QianliSession {
                     }
                     if let Some(frame) = assembler.push(&tbuf[..n]).into_iter().last() {
                         *seq += 1;
-                        return Ok(CameraFrame {
+                        Some(CameraFrame {
                             stream: StreamKind::Thermal,
                             seq: *seq,
                             at: std::time::Instant::now(),
@@ -307,23 +323,43 @@ impl CameraSession for QianliSession {
                                 raw: frame.raw,
                                 calibration,
                             }),
-                        });
+                        })
+                    } else {
+                        None
                     }
                 }
                 _ = keepalive.tick() => {
                     keepalive_due = true;
+                    None
                 }
-                _ = sleep(SILENCE_TIMEOUT) => {
+                _ = sleep(wait) => {
                     stalled = true;
+                    None
                 }
-            }
+            };
 
             if stalled {
-                bail!("camera sent nothing for {}s", SILENCE_TIMEOUT.as_secs());
+                if Instant::now() >= thermal_deadline {
+                    bail!(
+                        "camera sent no thermal frames for {}s",
+                        SILENCE_TIMEOUT.as_secs()
+                    );
+                }
+                bail!(
+                    "camera sent no visible frames for {}s",
+                    SILENCE_TIMEOUT.as_secs()
+                );
             }
             if keepalive_due {
                 let _ = probe0.write_all(&p::keepalive(0)).await;
                 let _ = probe1.write_all(&p::keepalive(1)).await;
+            }
+            if let Some(frame) = frame {
+                match frame.stream {
+                    StreamKind::Visible => self.last_visible = Instant::now(),
+                    StreamKind::Thermal => self.last_thermal = Instant::now(),
+                }
+                return Ok(frame);
             }
         }
     }
