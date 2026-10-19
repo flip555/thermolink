@@ -436,7 +436,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/discover", get(discover))
         .route("/api/snapshot", post(snapshot))
         .route("/api/snapshots", get(list_snapshots))
-        .route("/api/snapshots/{name}", get(snapshot_file))
+        .route("/api/snapshots.zip", get(snapshots_zip))
+        .route("/api/captures.zip", get(captures_zip))
+        .route("/api/snapshots/{name}", get(snapshot_file).delete(delete_snapshot))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, auth_mw))
 }
@@ -1212,6 +1214,68 @@ async fn reanalyze_json(
         },
         "calibration": img.calibration,
     })))
+}
+
+fn zip_directory(dir: &std::path::Path) -> anyhow::Result<Vec<u8>> {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            let mut paths: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .collect();
+            paths.sort();
+            for path in paths {
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+                let bytes = std::fs::read(&path)?;
+                writer.start_file(name, options)?;
+                writer.write_all(&bytes)?;
+            }
+        }
+        writer.finish()?;
+    }
+    Ok(cursor.into_inner())
+}
+
+fn zip_response(result: anyhow::Result<Vec<u8>>, filename: &str) -> Response {
+    match result {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/zip")
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            )
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn snapshots_zip(State(st): State<Arc<AppState>>) -> Response {
+    zip_response(zip_directory(&st.snapshots_dir()), "snapshots.zip")
+}
+
+async fn captures_zip(State(st): State<Arc<AppState>>) -> Response {
+    zip_response(zip_directory(&st.captures_dir()), "captures.zip")
+}
+
+async fn delete_snapshot(
+    State(st): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+) -> Json<serde_json::Value> {
+    if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        let dir = st.snapshots_dir();
+        for ext in ["jpg", "raw", "json"] {
+            let _ = std::fs::remove_file(dir.join(format!("{name}.{ext}")));
+        }
+    }
+    Json(json!({ "ok": true }))
 }
 
 async fn snapshot_file(
