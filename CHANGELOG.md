@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — 2026-10-19
+
+- Sync the `Cargo.lock` package version after the 0.3.0 tag.
+- `jpeg-encoder` 0.7.1 and CodeQL action v4 (closes the remaining Dependabot PRs).
+
 ## 0.3.0 — 2026-10-19
 
 - Stored-view snapshot re-analysis in the main window: saved thermal + visible
