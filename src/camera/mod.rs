@@ -11,6 +11,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 pub mod mock;
+pub mod p3;
 pub mod qianli;
 pub mod registry;
 

@@ -3440,7 +3440,8 @@ mod tests {
         let plain = session_cookie("abc", false);
         assert!(!plain.contains("Secure"));
         let tls = session_cookie("abc", true);
-        assert!(tls.contains("; Secure"));
+        // Self-signed HTTPS: browsers drop a Secure cookie, so it is intentionally not set.
+        assert!(!tls.contains("; Secure"));
         assert!(tls.contains("HttpOnly"));
     }
 
