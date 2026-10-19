@@ -624,6 +624,7 @@ async fn evaluate_alarms(st: &Arc<AppState>, stats: &crate::camera::ThermalStats
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/i18n/{file}", get(i18n_file))
         .route("/api/spec", get(spec))
         .route("/api/health", get(health))
         .route("/api/thermal.json", get(thermal_json))
@@ -685,10 +686,11 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 fn public_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/" | "/api/health" | "/api/version" | "/api/whoami" | "/api/setup" | "/api/login"
-    )
+    path.starts_with("/i18n/")
+        || matches!(
+            path,
+            "/" | "/api/health" | "/api/version" | "/api/whoami" | "/api/setup" | "/api/login"
+        )
 }
 
 fn session_token(headers: &HeaderMap) -> Option<String> {
@@ -1112,6 +1114,35 @@ async fn update_account(
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("../../web/index.html"))
+}
+
+/// Translations are embedded in the binary so a deployment is still a single file.
+/// `/i18n/<lang>.json` is public: the sign-in dialog needs it before a session exists.
+const I18N_LANGS: &[(&str, &str)] = &[
+    ("en", include_str!("../../web/i18n/en.json")),
+    ("es", include_str!("../../web/i18n/es.json")),
+    ("fr", include_str!("../../web/i18n/fr.json")),
+    ("de", include_str!("../../web/i18n/de.json")),
+    ("pt", include_str!("../../web/i18n/pt.json")),
+    ("zh", include_str!("../../web/i18n/zh.json")),
+    ("ja", include_str!("../../web/i18n/ja.json")),
+    ("ru", include_str!("../../web/i18n/ru.json")),
+    ("ar", include_str!("../../web/i18n/ar.json")),
+];
+
+async fn i18n_file(AxumPath(file): AxumPath<String>) -> Response {
+    let name = file.strip_suffix(".json").unwrap_or(&file);
+    match I18N_LANGS.iter().find(|(lang, _)| *lang == name) {
+        Some((_, body)) => (
+            [
+                (header::CONTENT_TYPE, "application/json; charset=utf-8"),
+                (header::CACHE_CONTROL, "public, max-age=3600"),
+            ],
+            *body,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "unknown language").into_response(),
+    }
 }
 
 async fn spec(State(st): State<Arc<AppState>>) -> Json<CameraSpec> {
@@ -3297,6 +3328,39 @@ mod tests {
         let tls = session_cookie("abc", true);
         assert!(tls.contains("; Secure"));
         assert!(tls.contains("HttpOnly"));
+    }
+
+    #[tokio::test]
+    async fn embedded_translations_are_served_and_complete() {
+        let res = i18n_file(AxumPath("de.json".into())).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/json; charset=utf-8"
+        );
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["tab.alarms"], "Alarme");
+
+        // Every language parses and carries exactly the English key set, so the
+        // client never has to guess which strings exist.
+        let mut en_keys: Vec<String> = Vec::new();
+        for (lang, text) in I18N_LANGS {
+            let value: serde_json::Value = serde_json::from_str(text).expect(lang);
+            let mut keys: Vec<String> =
+                value.as_object().expect("object").keys().cloned().collect();
+            keys.sort();
+            if *lang == "en" {
+                en_keys = keys;
+            } else {
+                assert_eq!(keys.len(), en_keys.len(), "{lang} key count");
+                assert_eq!(keys, en_keys, "{lang} key set");
+            }
+        }
+        assert!(en_keys.iter().any(|k| k == "auth.signIn"));
+
+        let missing = i18n_file(AxumPath("xx.json".into())).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

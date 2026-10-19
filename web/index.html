@@ -14,6 +14,8 @@
   button{cursor:pointer}button:hover{background:#232c37}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .top{display:flex;align-items:center;gap:10px;height:52px;padding:0 14px;border-bottom:1px solid var(--line);background:#0a0c0fee;flex-wrap:nowrap}
+  #lang{max-width:104px;padding:5px 6px;font-size:12px}
+  html[dir="rtl"] .src,html[dir="rtl"] .hint,html[dir="rtl"] .readout,html[dir="rtl"] .charthead{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
   .brand{font-weight:700;letter-spacing:.2px;font-size:15px;white-space:nowrap}
   .brand small{font-weight:400;color:var(--muted);font-size:11px;margin-left:7px}
   .status{display:flex;align-items:center;gap:6px;min-width:0}
@@ -124,21 +126,22 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand">ThermoLink <small id="mdl">connecting…</small></div>
-  <div class="status"><span class="dot" id="dot"></span><span class="src" id="source">connecting…</span></div>
+  <div class="brand">ThermoLink <small id="mdl" data-i18n="status.connecting">connecting…</small></div>
+  <div class="status"><span class="dot" id="dot"></span><span class="src" id="source" data-i18n="status.connecting">connecting…</span></div>
   <div class="seg" id="modes">
-    <button data-mode="thermal" class="active">Thermal</button>
-    <button data-mode="visible">Visible</button>
-    <button data-mode="wipe">Wipe</button>
-    <button data-mode="pip">PiP</button>
-    <button data-mode="fusion">Fusion</button>
+    <button data-mode="thermal" class="active" data-i18n="mode.thermal">Thermal</button>
+    <button data-mode="visible" data-i18n="mode.visible">Visible</button>
+    <button data-mode="wipe" data-i18n="mode.wipe">Wipe</button>
+    <button data-mode="pip" data-i18n="mode.pip">PiP</button>
+    <button data-mode="fusion" data-i18n="mode.fusion">Fusion</button>
   </div>
   <div class="spacer"></div>
+  <select id="lang" title="Language" data-i18n-title="label.language"></select>
   <button id="unit">°C</button>
-  <button id="fullBtn">Full</button>
-  <button id="snapTop" class="primary">Snapshot</button>
-  <button id="accountBtn" style="display:none">Account</button>
-  <button id="logout" style="display:none">Log out</button>
+  <button id="fullBtn" data-i18n="btn.full">Full</button>
+  <button id="snapTop" class="primary" data-i18n="btn.snapshot">Snapshot</button>
+  <button id="accountBtn" style="display:none" data-i18n="btn.account">Account</button>
+  <button id="logout" style="display:none" data-i18n="btn.logout">Log out</button>
 </header>
 
 <div class="shell">
@@ -148,22 +151,22 @@
       <img id="feed" alt="thermal" draggable="false">
       <img id="dtimg" alt="difference" draggable="false">
       <svg id="overlay" viewBox="0 0 160 120" preserveAspectRatio="none"></svg>
-      <div class="banner" id="banner"><span>ALARM</span><b id="bannerText"></b><span class="spacer"></span><button class="x" id="dismiss">×</button></div>
-      <div class="badge" id="badge">waiting</div>
-      <div class="waiting show" id="waiting">No thermal frames yet.<br>Check the camera connection.</div>
+      <div class="banner" id="banner"><span data-i18n="status.alarm">ALARM</span><b id="bannerText"></b><span class="spacer"></span><button class="x" id="dismiss">×</button></div>
+      <div class="badge" id="badge" data-i18n="status.waiting">waiting</div>
+      <div class="waiting show" id="waiting" data-i18n-html="status.noFrames">No thermal frames yet.<br>Check the camera connection.</div>
       <div class="readout">
-        <div class="min"><span>MIN</span><b id="tmin">–</b></div>
-        <div><span>MEAN</span><b id="tmean">–</b></div>
-        <div class="max"><span>MAX</span><b id="tmax">–</b></div>
+        <div class="min"><span data-i18n="label.min">MIN</span><b id="tmin">–</b></div>
+        <div><span data-i18n="label.mean">MEAN</span><b id="tmean">–</b></div>
+        <div class="max"><span data-i18n="label.max">MAX</span><b id="tmax">–</b></div>
       </div>
       <div id="hot"></div>
       <div id="sel"></div>
-      <div id="wipebar" title="drag to move the divider"></div>
+      <div id="wipebar" title="drag to move the divider" data-i18n-title="title.wipebar"></div>
     </section>
     <section class="chartcard">
-      <div class="charthead"><span>TEMPERATURE HISTORY</span>
+      <div class="charthead"><span data-i18n="chart.history">TEMPERATURE HISTORY</span>
         <span style="display:flex;gap:4px;align-items:center">
-          <button class="x" data-win="5">5m</button><button class="x" data-win="60">1h</button><button class="x" data-win="0">all</button><button class="x" id="chartClear">clear</button>
+          <button class="x" data-win="5">5m</button><button class="x" data-win="60">1h</button><button class="x" data-win="0" data-i18n="chart.all">all</button><button class="x" id="chartClear" data-i18n="chart.clear">clear</button>
           <span id="chartRange">1h</span></span></div>
       <canvas id="chart"></canvas>
     </section>
@@ -171,168 +174,168 @@
 
   <aside class="rail">
     <nav class="tabs" id="tabs">
-      <button data-tab="display" class="active">Display</button>
-      <button data-tab="measure">Measure</button>
-      <button data-tab="alarms">Alarms</button>
-      <button data-tab="capture">Capture</button>
-      <button data-tab="camera">Camera</button>
+      <button data-tab="display" class="active" data-i18n="tab.display">Display</button>
+      <button data-tab="measure" data-i18n="tab.measure">Measure</button>
+      <button data-tab="alarms" data-i18n="tab.alarms">Alarms</button>
+      <button data-tab="capture" data-i18n="tab.capture">Capture</button>
+      <button data-tab="camera" data-i18n="tab.camera">Camera</button>
     </nav>
 
     <div class="tabpanel active" id="tab-display">
-      <h2>Palette</h2>
+      <h2 data-i18n="panel.palette">Palette</h2>
       <div class="pals" id="pals"></div>
-      <h2>Bands</h2>
-      <label class="f">Clip low <input id="clipLo" type="number" step="0.5" placeholder="off"><span class="hint">shown</span></label>
-      <label class="f">Clip high <input id="clipHi" type="number" step="0.5" placeholder="off"><span class="hint">shown</span></label>
-      <label class="f">Span low <input id="spanLo" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
-      <label class="f">Span high <input id="spanHi" type="number" step="0.5" placeholder="auto"><span class="hint">colour</span></label>
-      <div class="row" style="margin-top:10px"><button id="apply">Apply</button><button id="reset">Reset</button></div>
+      <h2 data-i18n="panel.bands">Bands</h2>
+      <label class="f"><span data-i18n="label.clipLow">Clip low</span> <input id="clipLo" type="number" step="0.5" placeholder="off" data-i18n-placeholder="placeholder.off"><span class="hint" data-i18n="hint.shown">shown</span></label>
+      <label class="f"><span data-i18n="label.clipHigh">Clip high</span> <input id="clipHi" type="number" step="0.5" placeholder="off" data-i18n-placeholder="placeholder.off"><span class="hint" data-i18n="hint.shown">shown</span></label>
+      <label class="f"><span data-i18n="label.spanLow">Span low</span> <input id="spanLo" type="number" step="0.5" placeholder="auto" data-i18n-placeholder="placeholder.auto"><span class="hint" data-i18n="hint.colour">colour</span></label>
+      <label class="f"><span data-i18n="label.spanHigh">Span high</span> <input id="spanHi" type="number" step="0.5" placeholder="auto" data-i18n-placeholder="placeholder.auto"><span class="hint" data-i18n="hint.colour">colour</span></label>
+      <div class="row" style="margin-top:10px"><button id="apply" data-i18n="btn.apply">Apply</button><button id="reset" data-i18n="btn.reset">Reset</button></div>
       <div class="hint" id="bandState"></div>
-      <h2>Isotherm</h2>
+      <h2 data-i18n="panel.isotherm">Isotherm</h2>
       <div id="isoBands"></div>
-      <div class="row" style="margin-top:8px"><button id="isoAdd">Add band</button><button id="isoApply">Apply bands</button></div>
-      <h2>Isotherm profiles</h2>
+      <div class="row" style="margin-top:8px"><button id="isoAdd" data-i18n="btn.addBand">Add band</button><button id="isoApply" data-i18n="btn.applyBands">Apply bands</button></div>
+      <h2 data-i18n="panel.isoProfiles">Isotherm profiles</h2>
       <div class="row"><select id="isoProfile" style="flex:1"></select></div>
-      <div class="row" style="margin-top:6px"><button id="isoSave">Save as…</button><button id="isoDelete">Delete</button></div>
-      <div class="hint" id="isoState">Used when the isotherm palette is selected.</div>
-      <h2>PiP size</h2>
-      <div class="row"><button data-pip="small">Small</button><button data-pip="medium">Medium</button><button data-pip="large">Large</button></div>
-      <h2>Fusion</h2>
-      <label class="f">Thermal opacity <input type="range" id="fuse" min="0" max="100" value="55" style="width:100%"></label>
-      <h2>Wipe</h2>
+      <div class="row" style="margin-top:6px"><button id="isoSave" data-i18n="btn.saveAs">Save as…</button><button id="isoDelete" data-i18n="btn.delete">Delete</button></div>
+      <div class="hint" id="isoState" data-i18n="hint.isoProfile">Used when the isotherm palette is selected.</div>
+      <h2 data-i18n="panel.pipSize">PiP size</h2>
+      <div class="row"><button data-pip="small" data-i18n="pip.small">Small</button><button data-pip="medium" data-i18n="pip.medium">Medium</button><button data-pip="large" data-i18n="pip.large">Large</button></div>
+      <h2 data-i18n="panel.fusion">Fusion</h2>
+      <label class="f"><span data-i18n="label.thermalOpacity">Thermal opacity</span> <input type="range" id="fuse" min="0" max="100" value="55" style="width:100%"></label>
+      <h2 data-i18n="panel.wipe">Wipe</h2>
       <div class="anchors" id="anchors">
-        <button data-anchor="left" class="active">Thermal right</button>
-        <button data-anchor="right">Thermal left</button>
-        <button data-anchor="top">Thermal top</button>
-        <button data-anchor="bottom">Thermal bottom</button>
+        <button data-anchor="left" class="active" data-i18n="anchor.thermalRight">Thermal right</button>
+        <button data-anchor="right" data-i18n="anchor.thermalLeft">Thermal left</button>
+        <button data-anchor="top" data-i18n="anchor.thermalTop">Thermal top</button>
+        <button data-anchor="bottom" data-i18n="anchor.thermalBottom">Thermal bottom</button>
       </div>
-      <div class="hint">Drag the divider on the image to move the split.</div>
-      <h2>Align visible</h2>
+      <div class="hint" data-i18n="hint.wipeDrag">Drag the divider on the image to move the split.</div>
+      <h2 data-i18n="panel.align">Align visible</h2>
       <div class="row">
         <button data-nudge="0,-1">▲</button><button data-nudge="-1,0">◀</button>
         <button data-nudge="1,0">▶</button><button data-nudge="0,1">▼</button>
-        <button id="rot90">Rotate</button><button id="fliph">Flip H</button>
-        <button id="flipv">Flip V</button><button id="alignReset">Reset</button>
+        <button id="rot90" data-i18n="btn.rotate">Rotate</button><button id="fliph" data-i18n="btn.flipH">Flip H</button>
+        <button id="flipv" data-i18n="btn.flipV">Flip V</button><button id="alignReset" data-i18n="btn.reset">Reset</button>
       </div>
-      <label class="f">Scale <input id="alignScale" type="range" min="0.5" max="2" step="0.01" value="1" style="width:100%"></label>
+      <label class="f"><span data-i18n="label.scale">Scale</span> <input id="alignScale" type="range" min="0.5" max="2" step="0.01" value="1" style="width:100%"></label>
       <div class="hint" id="alignState"></div>
-      <h2>Hot spots</h2>
+      <h2 data-i18n="panel.hotspots">Hot spots</h2>
       <ul class="peaks" id="peaks"><li><span>–</span><span></span></li></ul>
     </div>
 
     <div class="tabpanel" id="tab-measure">
-      <h2>Measurements</h2>
-      <div class="hint" style="margin:0">Click for a point, drag for a box, or draw a polygon.</div>
-      <div class="row" style="margin-top:8px"><button id="pointBtn">Point</button><button id="boxBtn">Box</button><button id="polyBtn">Polygon</button><span class="hint" id="polyHint"></span></div>
-      <ul class="list" id="regions"><li><span class="grow">No measurements</span></li></ul>
-      <div class="row" style="margin-top:10px"><button id="clearRegions">Clear all</button>
+      <h2 data-i18n="panel.measurements">Measurements</h2>
+      <div class="hint" style="margin:0" data-i18n="hint.measure">Click for a point, drag for a box, or draw a polygon.</div>
+      <div class="row" style="margin-top:8px"><button id="pointBtn" data-i18n="btn.point">Point</button><button id="boxBtn" data-i18n="btn.box">Box</button><button id="polyBtn" data-i18n="btn.poly">Polygon</button><span class="hint" id="polyHint"></span></div>
+      <ul class="list" id="regions"><li><span class="grow" data-i18n="empty.measurements">No measurements</span></li></ul>
+      <div class="row" style="margin-top:10px"><button id="clearRegions" data-i18n="btn.clearAll">Clear all</button>
         <a class="hint" href="/api/regions.csv" target="_blank" rel="noreferrer">CSV</a></div>
-      <h2>Probe</h2>
-      <div class="kv" id="probe"><span>Point</span><span>–</span></div>
+      <h2 data-i18n="panel.probe">Probe</h2>
+      <div class="kv" id="probe"><span data-i18n="label.point">Point</span><span>–</span></div>
     </div>
 
     <div class="tabpanel" id="tab-alarms">
-      <h2>Alarms</h2>
-      <ul class="list" id="alarms"><li><span class="grow">No alarms</span></li></ul>
-      <h2>Add alarm</h2>
+      <h2 data-i18n="panel.alarms">Alarms</h2>
+      <ul class="list" id="alarms"><li><span class="grow" data-i18n="empty.alarms">No alarms</span></li></ul>
+      <h2 data-i18n="panel.addAlarm">Add alarm</h2>
       <div class="row">
-        <select id="alarmKind"><option value="above">Above</option><option value="below">Below</option></select>
+        <select id="alarmKind"><option value="above" data-i18n="option.above">Above</option><option value="below" data-i18n="option.below">Below</option></select>
         <input id="alarmC" type="number" step="0.5" value="45" style="width:80px">
         <span class="hint">°C</span>
       </div>
-      <label class="f">Dwell <input id="alarmDwell" type="number" min="0" value="3" style="width:70px"><span class="hint">seconds</span></label>
-      <label class="f">Name <input id="alarmName" type="text" placeholder="optional" style="width:100%"></label>
-      <div class="row" style="margin-top:10px"><button class="primary" id="addAlarm">Add alarm</button></div>
+      <label class="f"><span data-i18n="label.dwell">Dwell</span> <input id="alarmDwell" type="number" min="0" value="3" style="width:70px"><span class="hint" data-i18n="label.seconds">seconds</span></label>
+      <label class="f"><span data-i18n="label.name">Name</span> <input id="alarmName" type="text" placeholder="optional" data-i18n-placeholder="placeholder.optional" style="width:100%"></label>
+      <div class="row" style="margin-top:10px"><button class="primary" id="addAlarm" data-i18n="btn.addAlarm">Add alarm</button></div>
       <div class="hint" id="alarmState"></div>
-      <h2>Recent events</h2>
-      <ul class="list" id="events"><li><span class="grow">No events</span></li></ul>
+      <h2 data-i18n="panel.events">Recent events</h2>
+      <ul class="list" id="events"><li><span class="grow" data-i18n="empty.events">No events</span></li></ul>
       <div class="admin-only">
-      <h2>Notifications</h2>
-      <div class="hint" id="notifyState">none configured</div>
-      <label class="f">Discord <input id="notifyDiscord" placeholder="webhook URL" style="width:100%"></label>
-      <label class="f">Slack <input id="notifySlack" placeholder="webhook URL" style="width:100%"></label>
-      <label class="f">Telegram token <input id="notifyTgToken" type="password" placeholder="bot token" style="width:100%"></label>
-      <label class="f">Telegram chat <input id="notifyTgChat" placeholder="chat id" style="width:100%"></label>
-      <label class="f">Webhook <input id="notifyHook" placeholder="https://…" style="width:100%"></label>
-      <div class="row" style="margin-top:8px"><button id="notifySave">Save</button><button id="notifyClear">Clear all</button></div>
-      <div class="hint">Blank fields are unchanged. Stored server-side; values are never returned.</div>
+      <h2 data-i18n="panel.notify">Notifications</h2>
+      <div class="hint" id="notifyState" data-i18n="hint.notifyNone">none configured</div>
+      <label class="f"><span data-i18n="label.discord">Discord</span> <input id="notifyDiscord" placeholder="webhook URL" data-i18n-placeholder="placeholder.webhook" style="width:100%"></label>
+      <label class="f"><span data-i18n="label.slack">Slack</span> <input id="notifySlack" placeholder="webhook URL" data-i18n-placeholder="placeholder.webhook" style="width:100%"></label>
+      <label class="f"><span data-i18n="label.tgToken">Telegram token</span> <input id="notifyTgToken" type="password" placeholder="bot token" data-i18n-placeholder="placeholder.botToken" style="width:100%"></label>
+      <label class="f"><span data-i18n="label.tgChat">Telegram chat</span> <input id="notifyTgChat" placeholder="chat id" data-i18n-placeholder="placeholder.chatId" style="width:100%"></label>
+      <label class="f"><span data-i18n="label.webhook">Webhook</span> <input id="notifyHook" placeholder="https://…" data-i18n-placeholder="placeholder.webhook" style="width:100%"></label>
+      <div class="row" style="margin-top:8px"><button id="notifySave" data-i18n="btn.save">Save</button><button id="notifyClear" data-i18n="btn.clearAll">Clear all</button></div>
+      <div class="hint" data-i18n="hint.notifyBlank">Blank fields are unchanged. Stored server-side; values are never returned.</div>
       </div>
-      <h2>Last event</h2>
-      <div class="kv" id="lastAlarm"><span>—</span><span>none</span></div>
+      <h2 data-i18n="panel.lastEvent">Last event</h2>
+      <div class="kv" id="lastAlarm"><span>—</span><span data-i18n="label.none">none</span></div>
     </div>
 
     <div class="tabpanel" id="tab-capture">
-      <h2>Snapshots</h2>
-      <div class="row"><button class="primary" id="snap">Save snapshot</button><a class="hint" href="/api/snapshots" target="_blank" rel="noreferrer">JSON</a><a class="hint" href="/api/snapshots.zip">zip</a></div>
+      <h2 data-i18n="panel.snapshots">Snapshots</h2>
+      <div class="row"><button class="primary" id="snap" data-i18n="btn.saveSnapshot">Save snapshot</button><a class="hint" href="/api/snapshots" target="_blank" rel="noreferrer">JSON</a><a class="hint" href="/api/snapshots.zip">zip</a></div>
       <div class="hint" id="snapState"></div>
       <div class="snaps" id="snaps"></div>
-      <h2>Pre-record</h2>
-      <label class="f"><input type="checkbox" id="prEnabled" style="width:auto"> Enabled</label>
-      <label class="f">Before <input id="prBefore" type="number" min="0" max="60" style="width:70px"><span class="hint">seconds</span></label>
-      <label class="f">After <input id="prAfter" type="number" min="0" max="60" style="width:70px"><span class="hint">seconds</span></label>
-      <div class="row" style="margin-top:8px"><button id="prSave">Save</button></div>
+      <h2 data-i18n="panel.prerecord">Pre-record</h2>
+      <label class="f"><input type="checkbox" id="prEnabled" style="width:auto"> <span data-i18n="label.enabled">Enabled</span></label>
+      <label class="f"><span data-i18n="label.before">Before</span> <input id="prBefore" type="number" min="0" max="60" style="width:70px"><span class="hint" data-i18n="label.seconds">seconds</span></label>
+      <label class="f"><span data-i18n="label.after">After</span> <input id="prAfter" type="number" min="0" max="60" style="width:70px"><span class="hint" data-i18n="label.seconds">seconds</span></label>
+      <div class="row" style="margin-top:8px"><button id="prSave" data-i18n="btn.save">Save</button></div>
       <div class="hint" id="prState"></div>
       <div class="snaps" id="captures"></div>
       <div class="row" style="margin-top:6px"><a class="hint" href="/api/captures.zip">captures.zip</a></div>
-      <h2>References</h2>
-      <label class="f">Name <input id="refName" placeholder="optional" style="width:100%"></label>
-      <div class="row"><button id="refSave">Save reference</button><button id="refClearAll">Clear all</button></div>
-      <ul class="list" id="refList"><li><span class="grow">No references</span></li></ul>
-      <h2>Difference (ΔT)</h2>
-      <div class="row"><button id="setRef">Set reference</button><button id="clearRef">Clear</button></div>
-      <label class="f">Span ± <input id="dtSpan" type="number" min="0.5" max="50" step="0.5" style="width:70px"><span class="hint">°C</span></label>
-      <div class="row" style="margin-top:8px"><select id="cmpA" title="reference A"></select><span class="hint">vs</span><select id="cmpB" title="reference B"></select><a class="hint" id="cmpLink" href="#" target="_blank" rel="noreferrer">compare A/B</a></div>
-      <label class="f"><input type="checkbox" id="dtToggle" style="width:auto"> Show ΔT image</label>
-      <div class="kv" id="dtStats" style="margin-top:8px"><span>ΔT</span><span>no reference</span></div>
+      <h2 data-i18n="panel.references">References</h2>
+      <label class="f"><span data-i18n="label.name">Name</span> <input id="refName" placeholder="optional" data-i18n-placeholder="placeholder.optional" style="width:100%"></label>
+      <div class="row"><button id="refSave" data-i18n="btn.saveReference">Save reference</button><button id="refClearAll" data-i18n="btn.clearAll">Clear all</button></div>
+      <ul class="list" id="refList"><li><span class="grow" data-i18n="empty.references">No references</span></li></ul>
+      <h2 data-i18n="panel.dt">Difference (ΔT)</h2>
+      <div class="row"><button id="setRef" data-i18n="btn.setReference">Set reference</button><button id="clearRef" data-i18n="btn.clear">Clear</button></div>
+      <label class="f"><span data-i18n="label.spanPm">Span ±</span> <input id="dtSpan" type="number" min="0.5" max="50" step="0.5" style="width:70px"><span class="hint">°C</span></label>
+      <div class="row" style="margin-top:8px"><select id="cmpA" title="reference A"></select><span class="hint" data-i18n="label.vs">vs</span><select id="cmpB" title="reference B"></select><a class="hint" id="cmpLink" href="#" target="_blank" rel="noreferrer" data-i18n="btn.compareAB">compare A/B</a></div>
+      <label class="f"><input type="checkbox" id="dtToggle" style="width:auto"> <span data-i18n="label.showDt">Show ΔT image</span></label>
+      <div class="kv" id="dtStats" style="margin-top:8px"><span>ΔT</span><span data-i18n="label.noReference">no reference</span></div>
     </div>
 
     <div class="tabpanel" id="tab-camera">
-      <h2>Source</h2>
+      <h2 data-i18n="panel.source">Source</h2>
       <div class="kv">
-        <span>Driver</span><span id="drv">–</span>
-        <span>Model</span><span id="cmodel">–</span>
-        <span>Thermal</span><span id="res">–</span>
-        <span>Frame</span><span id="seq">–</span>
-        <span>Link</span><span id="link">–</span>
-        <span>Video</span><span id="vlink">–</span>
-        <span>Version</span><span id="ver">–</span>
+        <span data-i18n="label.driver">Driver</span><span id="drv">–</span>
+        <span data-i18n="label.model">Model</span><span id="cmodel">–</span>
+        <span data-i18n="label.thermal">Thermal</span><span id="res">–</span>
+        <span data-i18n="label.frame">Frame</span><span id="seq">–</span>
+        <span data-i18n="label.link">Link</span><span id="link">–</span>
+        <span data-i18n="label.video">Video</span><span id="vlink">–</span>
+        <span data-i18n="label.version">Version</span><span id="ver">–</span>
       </div>
-      <h2 class="admin-only">Relay</h2>
+      <h2 class="admin-only" data-i18n="panel.relay">Relay</h2>
       <div class="admin-only">
         <div class="kv">
-          <span>Build</span><span id="verBuild">–</span>
-          <span>Repository</span><span id="verRepo">–</span>
+          <span data-i18n="label.build">Build</span><span id="verBuild">–</span>
+          <span data-i18n="label.repository">Repository</span><span id="verRepo">–</span>
         </div>
         <div class="row" style="margin-top:8px">
-          <button id="updCheck">Check for updates</button>
-          <button id="updInstall" disabled>Install update</button>
-          <button id="updRestart">Restart relay</button>
+          <button id="updCheck" data-i18n="btn.checkUpdates">Check for updates</button>
+          <button id="updInstall" disabled data-i18n="btn.installUpdate">Install update</button>
+          <button id="updRestart" data-i18n="btn.restartRelay">Restart relay</button>
         </div>
-        <div class="hint" id="updState">Not checked.</div>
+        <div class="hint" id="updState" data-i18n="hint.notChecked">Not checked.</div>
         <div class="hint" id="updNotes" style="white-space:pre-wrap"></div>
-        <div class="hint">Installing replaces the binary on disk; the running build keeps serving until you restart. A restart signs everyone in again.</div>
+        <div class="hint" data-i18n="hint.updateNote">Installing replaces the binary on disk; the running build keeps serving until you restart. A restart signs everyone in again.</div>
       </div>
-      <h2>Discovery</h2>
-      <div class="row"><button id="discover">Discover cameras</button></div>
-      <div class="kv" id="discovered" style="margin-top:8px"><span>—</span><span>not scanned</span></div>
-      <h2>Camera settings</h2>
-      <div class="row"><button id="camRead">Read from camera</button></div>
-      <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span>not read</span></div>
+      <h2 data-i18n="panel.discovery">Discovery</h2>
+      <div class="row"><button id="discover" data-i18n="btn.discover">Discover cameras</button></div>
+      <div class="kv" id="discovered" style="margin-top:8px"><span>—</span><span data-i18n="label.notScanned">not scanned</span></div>
+      <h2 data-i18n="panel.cameraSettings">Camera settings</h2>
+      <div class="row"><button id="camRead" data-i18n="btn.readCamera">Read from camera</button></div>
+      <div class="kv" id="camSettings" style="margin-top:8px"><span>—</span><span data-i18n="label.notRead">not read</span></div>
       <div class="admin-only">
-        <label class="f">IP address <input id="camIp" placeholder="192.168.1.85"></label>
-        <label class="f">Netmask <input id="camMask" placeholder="255.255.255.0"></label>
-        <label class="f">Gateway <input id="camGw" placeholder="192.168.1.1"></label>
-        <label class="f">DNS <input id="camDns" placeholder="192.168.1.1"></label>
-        <div class="row" style="margin-top:8px"><button id="camSave">Save to camera</button></div>
-        <div class="hint">Writes the camera's own network block. A network change only takes hold after a reboot.</div>
+        <label class="f"><span data-i18n="label.ip">IP address</span> <input id="camIp" placeholder="192.168.1.85"></label>
+        <label class="f"><span data-i18n="label.netmask">Netmask</span> <input id="camMask" placeholder="255.255.255.0"></label>
+        <label class="f"><span data-i18n="label.gateway">Gateway</span> <input id="camGw" placeholder="192.168.1.1"></label>
+        <label class="f"><span data-i18n="label.dns">DNS</span> <input id="camDns" placeholder="192.168.1.1"></label>
+        <div class="row" style="margin-top:8px"><button id="camSave" data-i18n="btn.saveCamera">Save to camera</button></div>
+        <div class="hint" data-i18n="hint.cameraWrite">Writes the camera's own network block. A network change only takes hold after a reboot.</div>
       </div>
-      <div class="row" style="margin-top:8px"><button id="camReboot" class="admin-only">Reboot camera</button></div>
-      <h2>Calibration</h2>
-      <label class="f">Scale <input id="calScale" type="number" step="0.0001"><span class="hint">°C/raw</span></label>
-      <label class="f">Offset <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
-      <div class="row" style="margin-top:9px"><button id="calApply">Apply</button><button id="calFactory">Factory</button></div>
+      <div class="row" style="margin-top:8px"><button id="camReboot" class="admin-only" data-i18n="btn.rebootCamera">Reboot camera</button></div>
+      <h2 data-i18n="panel.calibration">Calibration</h2>
+      <label class="f"><span data-i18n="label.scale">Scale</span> <input id="calScale" type="number" step="0.0001"><span class="hint" data-i18n="hint.cPerRaw">°C/raw</span></label>
+      <label class="f"><span data-i18n="label.offset">Offset</span> <input id="calOffset" type="number" step="0.1"><span class="hint">°C</span></label>
+      <div class="row" style="margin-top:9px"><button id="calApply" data-i18n="btn.apply">Apply</button><button id="calFactory" data-i18n="btn.factory">Factory</button></div>
       <div class="hint" id="calState"></div>
-      <h2>Endpoints</h2>
+      <h2 data-i18n="panel.endpoints">Endpoints</h2>
       <div class="hint" style="line-height:1.7">
         /api/thermal.jpg · /api/thermal.mjpg<br>
         /api/video.jpg · /api/video.mjpg<br>
@@ -345,39 +348,39 @@
 
 <div class="authmodal" id="account">
   <div class="authcard" style="width:420px;max-height:86vh;overflow:auto">
-    <h1>Account</h1>
+    <h1 data-i18n="panel.account">Account</h1>
     <div class="hint" id="acctWho"></div>
-    <h2>Username</h2>
-    <label class="f">New username <input id="acctUser" autocomplete="username" style="flex:1"></label>
-    <div class="row"><button id="acctUserSave">Save username</button></div>
-    <h2>Password</h2>
-    <label class="f">Current <input id="acctCurrent" type="password" autocomplete="current-password" style="flex:1"></label>
-    <label class="f">New <input id="acctNew" type="password" autocomplete="new-password" style="flex:1"></label>
-    <label class="f">Confirm <input id="acctConfirm" type="password" autocomplete="new-password" style="flex:1"></label>
-    <div class="row"><button id="acctPassSave">Change password</button></div>
-    <h2>Guest account</h2>
-    <div class="hint">A guest can watch and measure, and use only the capabilities granted below. The camera, update, account and notification settings stay admin-only.</div>
-    <label class="f"><input id="acctGuestOn" type="checkbox" style="width:auto"> Enabled</label>
-    <label class="f">Password <input id="acctGuestPass" type="password" autocomplete="new-password" placeholder="set or replace" style="flex:1"></label>
-    <div class="row"><button id="acctGuestSave">Save guest</button></div>
-    <h2>Guest permissions</h2>
+    <h2 data-i18n="label.username">Username</h2>
+    <label class="f"><span data-i18n="label.newUsername">New username</span> <input id="acctUser" autocomplete="username" style="flex:1"></label>
+    <div class="row"><button id="acctUserSave" data-i18n="btn.saveUsername">Save username</button></div>
+    <h2 data-i18n="label.password">Password</h2>
+    <label class="f"><span data-i18n="label.current">Current</span> <input id="acctCurrent" type="password" autocomplete="current-password" style="flex:1"></label>
+    <label class="f"><span data-i18n="label.new">New</span> <input id="acctNew" type="password" autocomplete="new-password" style="flex:1"></label>
+    <label class="f"><span data-i18n="label.confirm">Confirm</span> <input id="acctConfirm" type="password" autocomplete="new-password" style="flex:1"></label>
+    <div class="row"><button id="acctPassSave" data-i18n="btn.changePassword">Change password</button></div>
+    <h2 data-i18n="panel.guest">Guest account</h2>
+    <div class="hint" data-i18n="hint.guestDesc">A guest can watch and measure, and use only the capabilities granted below. The camera, update, account and notification settings stay admin-only.</div>
+    <label class="f"><input id="acctGuestOn" type="checkbox" style="width:auto"> <span data-i18n="label.enabled">Enabled</span></label>
+    <label class="f"><span data-i18n="label.password">Password</span> <input id="acctGuestPass" type="password" autocomplete="new-password" placeholder="set or replace" data-i18n-placeholder="placeholder.setReplace" style="flex:1"></label>
+    <div class="row"><button id="acctGuestSave" data-i18n="btn.saveGuest">Save guest</button></div>
+    <h2 data-i18n="panel.guestPerms">Guest permissions</h2>
     <div id="acctPerms"></div>
-    <div class="row" style="margin-top:8px"><button id="acctPermsSave">Save permissions</button></div>
+    <div class="row" style="margin-top:8px"><button id="acctPermsSave" data-i18n="btn.savePerms">Save permissions</button></div>
     <div class="err" id="acctErr"></div>
     <div class="ok" id="acctMsg"></div>
-    <div class="row" style="margin-top:6px"><button id="acctClose">Close</button></div>
+    <div class="row" style="margin-top:6px"><button id="acctClose" data-i18n="btn.close">Close</button></div>
   </div>
 </div>
 
 <div class="authmodal" id="auth">
   <form class="authcard" id="authForm">
-    <h1 id="authTitle">Sign in</h1>
+    <h1 id="authTitle" data-i18n="auth.signIn">Sign in</h1>
     <div class="hint" id="authHint"></div>
-    <label class="f">Username <input id="authUser" autocomplete="username" required></label>
-    <label class="f">Password <input id="authPass" type="password" autocomplete="current-password" required></label>
-    <label class="f" id="authTokenRow" style="display:none">Setup token <input id="authToken" placeholder="only if remote setup is refused"></label>
+    <label class="f"><span data-i18n="label.username">Username</span> <input id="authUser" autocomplete="username" required></label>
+    <label class="f"><span data-i18n="label.password">Password</span> <input id="authPass" type="password" autocomplete="current-password" required></label>
+    <label class="f" id="authTokenRow" style="display:none"><span data-i18n="label.setupToken">Setup token</span> <input id="authToken" placeholder="only if remote setup is refused" data-i18n-placeholder="placeholder.setupToken"></label>
     <div class="err" id="authErr"></div>
-    <button class="primary" type="submit" id="authSubmit">Sign in</button>
+    <button class="primary" type="submit" id="authSubmit" data-i18n="auth.signIn">Sign in</button>
   </form>
 </div>
 
@@ -385,6 +388,54 @@
 const $ = (id) => document.getElementById(id);
 const saved = (k, d) => { try { const v = localStorage.getItem("thermolink." + k); return v === null ? d : v; } catch(e) { return d; } };
 const save = (k, v) => { try { localStorage.setItem("thermolink." + k, v); } catch(e) {} };
+
+// ---------- i18n ----------
+const LANGS = [
+  ["en", "English"], ["es", "Español"], ["fr", "Français"], ["de", "Deutsch"],
+  ["pt", "Português"], ["zh", "简体中文"], ["ja", "日本語"], ["ru", "Русский"], ["ar", "العربية"]
+];
+const LANG_CODES = LANGS.map(l => l[0]);
+let LANG = saved("lang", ((navigator.language || "en").slice(0, 2) || "en").toLowerCase());
+if (!LANG_CODES.includes(LANG)) LANG = "en";
+let I18N = {};
+function t(key, vars) {
+  let s = I18N[key] != null ? I18N[key] : key;
+  if (vars) for (const k in vars) s = s.split("{" + k + "}").join(vars[k]);
+  return s;
+}
+function applyI18N() {
+  document.documentElement.lang = LANG;
+  document.documentElement.dir = LANG === "ar" ? "rtl" : "ltr";
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
+  document.querySelectorAll("[data-i18n-title]").forEach(el => { el.title = t(el.dataset.i18nTitle); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  const sel = $("lang");
+  if (sel) sel.value = LANG;
+  applyAuthText();
+}
+async function loadLang(lang) {
+  try {
+    let base = {};
+    const en = await fetch("/i18n/en.json", { cache: "no-store" });
+    if (en.ok) base = await en.json();
+    let loc = {};
+    if (lang !== "en") {
+      const r = await fetch("/i18n/" + lang + ".json", { cache: "no-store" });
+      if (r.ok) loc = await r.json();
+    }
+    I18N = Object.assign({}, base, loc);
+  } catch (e) { I18N = {}; }
+  LANG = lang;
+  applyI18N();
+}
+function initLangPicker() {
+  const sel = $("lang");
+  if (!sel) return;
+  sel.innerHTML = LANGS.map(l => `<option value="${l[0]}">${l[1]}</option>`).join("");
+  sel.value = LANG;
+  sel.onchange = () => { save("lang", sel.value); loadLang(sel.value); };
+}
 
 const state = {
   unit: saved("unit", "C"), display: null, initialized: false, palettes: [],
@@ -436,6 +487,18 @@ function applyGuestUi() {
     if (first) setTab(first.dataset.tab);
   }
 }
+function applyAuthText() {
+  if (!$("authTitle")) return;
+  if (authMode === "setup") {
+    $("authTitle").textContent = t("auth.createAdmin");
+    $("authHint").textContent = t("auth.setupHint");
+    $("authSubmit").textContent = t("btn.createAccount");
+  } else {
+    $("authTitle").textContent = t("auth.signIn");
+    $("authHint").textContent = t("auth.credentialsHint");
+    $("authSubmit").textContent = t("auth.signIn");
+  }
+}
 async function initAuth() {
   try {
     const d = await (await fetch("/api/whoami")).json();
@@ -448,22 +511,18 @@ async function initAuth() {
     }
     if (d.setup_required) {
       authMode = "setup";
-      $("authTitle").textContent = "Create admin account";
-      $("authHint").textContent = "First run: set the admin username and password (6+ characters).";
-      $("authSubmit").textContent = "Create account";
+      applyAuthText();
       $("authPass").autocomplete = "new-password";
       $("authTokenRow").style.display = "";
       $("auth").classList.add("show");
       return;
     }
     authMode = "login";
-    $("authTitle").textContent = "Sign in";
-    $("authHint").textContent = "Enter your credentials.";
-    $("authSubmit").textContent = "Sign in";
+    applyAuthText();
     $("authTokenRow").style.display = "none";
     $("auth").classList.add("show");
   } catch (e) {
-    $("authErr").textContent = "server unreachable";
+    $("authErr").textContent = t("err.serverUnreachable");
     $("auth").classList.add("show");
   }
 }
@@ -497,7 +556,7 @@ async function openAccount() {
   const r = await fetch("/api/account");
   if (!r.ok) { acctMsg(await r.text(), true); $("account").classList.add("show"); return; }
   const d = await r.json();
-  $("acctWho").textContent = "Signed in as " + d.username + " (" + d.role + ")";
+  $("acctWho").textContent = t("auth.signedInAs", { name: d.username + " (" + d.role + ")" });
   $("acctUser").value = d.username;
   $("acctGuestOn").checked = !!d.guest_enabled;
   $("acctPerms").innerHTML = (d.caps || []).map(c =>
@@ -508,7 +567,7 @@ $("accountBtn").onclick = openAccount;
 $("acctClose").onclick = () => $("account").classList.remove("show");
 $("acctUserSave").onclick = async () => {
   const d = await acctPost({ action: "username", username: $("acctUser").value });
-  if (d) { acctMsg("Username saved."); $("acctWho").textContent = "Signed in as " + d.username; }
+  if (d) { acctMsg("Username saved."); $("acctWho").textContent = t("auth.signedInAs", { name: d.username }); }
 };
 $("acctPassSave").onclick = async () => {
   if ($("acctNew").value !== $("acctConfirm").value) { acctMsg("Passwords do not match.", true); return; }
@@ -771,13 +830,13 @@ viewer.addEventListener("pointerup", async (e) => {
       }
     }
     state.polyPts.push(start);
-    $("polyHint").textContent = `${state.polyPts.length} points — click the first to close`;
+    $("polyHint").textContent = t("hint.polyCount", { n: state.polyPts.length });
     drawRegions();
     return;
   }
   if (state.drawMode === "point") {
     const r = await fetch(`/api/point?x=${start[0]}&y=${start[1]}`);
-    if (r.ok) { const d=await r.json(); $("probe").innerHTML=`<span>Point ${d.x},${d.y}</span><span>${fmt(d.c)}</span>`; }
+    if (r.ok) { const d=await r.json(); $("probe").innerHTML=`<span>${t("probe.point",{x:d.x,y:d.y})}</span><span>${fmt(d.c)}</span>`; }
     await fetch("/api/regions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ kind:"point", pts:[start] }) });
     loadRegions();
     return;
@@ -794,7 +853,7 @@ function setDraw(mode) {
   for (const [id, m] of [["pointBtn","point"],["boxBtn","rect"],["polyBtn","poly"]])
     $(id).classList.toggle("active", state.drawMode === m);
   $("viewer").classList.toggle("draw", state.drawMode !== "none");
-  $("polyHint").textContent = state.drawMode === "poly" ? "click points; click the first to close"
+  $("polyHint").textContent = state.drawMode === "poly" ? t("hint.polyClick")
     : state.drawMode === "rect" ? "drag a box"
     : state.drawMode === "point" ? "click a point" : "";
   drawRegions();
@@ -864,7 +923,7 @@ async function loadRegions() {
             `<button class="x" data-ref="${r.id}" title="set reference">★</button>` +
             `<button class="x" data-id="${r.id}">×</button></li>`;
         }).join("")
-      : "<li><span class='grow'>No measurements</span></li>";
+      : `<li><span class='grow'>${t("empty.measurements")}</span></li>`;
     for (const b of $("regions").querySelectorAll("button[data-id]"))
       b.onclick = async () => { await fetch("/api/regions/"+b.dataset.id,{method:"DELETE"}); loadRegions(); };
     for (const b of $("regions").querySelectorAll("button[data-ref]"))
@@ -882,7 +941,7 @@ async function loadAlarms() {
       ? state.alarms.map(a =>
           `<li><span class="grow">${a.name}</span><span class="val">${a.kind} ${fmt(a.threshold_c)} · ${a.dwell_s}s</span>` +
           `<button class="x" data-id="${a.id}">×</button></li>`).join("")
-      : "<li><span class='grow'>No alarms</span></li>";
+      : `<li><span class='grow'>${t("empty.alarms")}</span></li>`;
     for (const b of $("alarms").querySelectorAll("button[data-id]"))
       b.onclick = async () => { await fetch("/api/alarms/"+b.dataset.id,{method:"DELETE"}); loadAlarms(); };
     const last = d.last_alarm;
@@ -976,7 +1035,7 @@ async function loadReferences() {
           `<span class="val">${new Date(r.at*1000).toLocaleTimeString()}</span>` +
           `<button class="x" data-act="${r.id}" title="activate">●</button>` +
           `<button class="x" data-del="${r.id}">×</button></li>`).join("")
-      : "<li><span class='grow'>No references</span></li>";
+      : `<li><span class='grow'>${t("empty.references")}</span></li>`;
     for (const b of $("refList").querySelectorAll("button[data-act]"))
       b.onclick = async () => { await fetch("/api/references/"+b.dataset.act+"/activate",{method:"POST"}); loadReferences(); refreshDt(); };
     for (const b of $("refList").querySelectorAll("button[data-del]"))
@@ -1019,7 +1078,7 @@ async function loadEvents() {
     const list = (d.events || []).slice().reverse();
     $("events").innerHTML = list.length
       ? list.map(e => `<li><span class="grow">${new Date(e.at*1000).toLocaleTimeString()} · ${e.name}</span><span class="val">${fmt(e.value_c)}</span></li>`).join("")
-      : "<li><span class='grow'>No events</span></li>";
+      : `<li><span class='grow'>${t("empty.events")}</span></li>`;
   } catch(e) {}
 }
 
@@ -1150,7 +1209,7 @@ async function poll() {
     const connected=!!d.connected, ready=!!d.ready;
     $("dot").className="dot"+(connected?" on":"");
     $("waiting").classList.toggle("show", !ready);
-    $("badge").textContent = ready ? (connected?"live":"stale") : "waiting";
+    $("badge").textContent = ready ? (connected ? t("status.live") : t("status.stale")) : t("status.waiting");
     if (d.spec) {
       $("drv").textContent=d.spec.driver||"–";
       $("cmodel").textContent=d.spec.model||"–";
@@ -1197,6 +1256,8 @@ $("feed").onerror = () => { state.feedStarted=false; setTimeout(()=>{ $("feed").
 $("vis").onerror = () => { state.visStarted=false; setTimeout(()=>{ $("vis").src="/api/video.mjpg?t="+Date.now(); state.visStarted=true; }, 2000); };
 
 // ---------- startup ----------
+initLangPicker();
+loadLang(LANG);
 initAuth();
 $("unit").textContent = "°" + state.unit;
 const fuse = saved("fuse", "55");
