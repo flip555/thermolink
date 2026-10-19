@@ -301,6 +301,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
         return Json(json!({
             "ready": false,
             "connected": st.connected(),
+            "video": st.video.is_some(),
             "display": display,
             "calibration": calibration,
             "palettes": PALETTES,
@@ -319,6 +320,7 @@ async fn thermal_json(State(st): State<Arc<AppState>>) -> Json<serde_json::Value
     Json(json!({
         "ready": true,
         "connected": st.connected(),
+        "video": st.video.is_some(),
         "seq": frame.seq,
         "stats": {
             "min_c": round2(stats.min_c),
