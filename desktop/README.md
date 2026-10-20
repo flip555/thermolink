@@ -57,13 +57,21 @@ a Developer ID identity and notarization instead of ad-hoc signing.
 
 ### Static ffmpeg
 
-`thermolink` honors `THERMOLINK_FFMPEG`, and the desktop app looks for
-`Contents/Resources/ffmpeg` first. Copy a licensed static ffmpeg binary there
-for a self-contained app.
+Build and bundle an LGPL static FFmpeg:
 
-The `ffmpeg-static` npm test binary used during development is built with
-`--enable-gpl --enable-nonfree`; do not redistribute it. Use an LGPL static
-build (or a properly licensed binary) for a public release.
+```bash
+./desktop/build-lgpl-ffmpeg.sh
+./desktop/package-macos-dev.sh
+```
+
+The first script builds FFmpeg 7.1.1 with `--disable-gpl --disable-nonfree`
+into `desktop/vendor/ffmpeg` (ignored by git). The second builds the app, copies
+the binary and license into `Contents/Resources`, and signs the bundle ad-hoc.
+`thermolink` also honors `THERMOLINK_FFMPEG`.
+
+For distribution, use a Developer ID identity and notarization instead of
+ad-hoc signing. The GPL/nonfree `ffmpeg-static` test binary must not be
+redistributed.
 
 ## Current scope
 

@@ -20,6 +20,9 @@
   `Contents/Resources/ffmpeg`, enabling a bundled static ffmpeg. Verified the
   Qianli thermal and visible streams with a local static build; that test
   binary is GPL/nonfree and must not be redistributed.
+- Added `desktop/build-lgpl-ffmpeg.sh` and `desktop/package-macos-dev.sh` to
+  build and bundle an LGPL static FFmpeg reproducibly; the binary stays
+  git-ignored, with its license copied into the app bundle.
 - Camera UI: Auto-detect is now explicitly UVC-only; Qianli users are pointed at
   Discover cameras.
 - The release workflow now builds unsigned desktop bundles on Linux, macOS and

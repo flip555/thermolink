@@ -1,5 +1,6 @@
 /target
 desktop/src-tauri/gen/
+desktop/vendor/
 desktop/node_modules/
 *.h264
 *.raw
