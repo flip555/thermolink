@@ -1,13 +1,10 @@
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use thermolink::camera::{registry, CameraDriver, FramePayload};
 use thermolink::config::{CameraConfig, Config};
-use thermolink::server::{self, AppState, CameraRuntime};
 use thermolink::stream::FrameHub;
 use tracing::{info, warn};
 
@@ -174,54 +171,6 @@ async fn main() -> Result<()> {
     }
 }
 
-fn insert_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
-fn ensure_tls_cert(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
-    let cert = data_dir.join("tls-cert.pem");
-    let key = data_dir.join("tls-key.pem");
-    if cert.exists() && key.exists() {
-        return Ok((cert, key));
-    }
-    std::fs::create_dir_all(data_dir)?;
-    let status = std::process::Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "3650",
-            "-keyout",
-            key.to_str().context("key path")?,
-            "-out",
-            cert.to_str().context("cert path")?,
-            "-subj",
-            "/CN=thermolink",
-            "-addext",
-            "subjectAltName=IP:172.20.1.85,IP:172.20.5.127,IP:127.0.0.1,DNS:localhost",
-        ])
-        .status()
-        .context("running openssl")?;
-    if !status.success() {
-        anyhow::bail!("openssl could not generate a certificate");
-    }
-    Ok((cert, key))
-}
-
-async fn mark_https(
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    req.headers_mut().insert(
-        "x-forwarded-proto",
-        axum::http::HeaderValue::from_static("https"),
-    );
-    next.run(req).await
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn serve(
     driver: String,
@@ -233,132 +182,24 @@ async fn serve(
     demo: bool,
     data_dir: PathBuf,
 ) -> Result<()> {
-    insert_crypto_provider();
-    let saved: Option<thermolink::config::CameraConfig> =
-        std::fs::read_to_string(data_dir.join("camera.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok());
-    let mut cfg = saved.unwrap_or_else(|| camera_config(driver, host, control_port, media_port));
-    if demo {
-        cfg.driver = "mock".to_string();
-    }
-    if cfg.profile.is_none() {
-        cfg.profile = profile;
-    }
-    if registry::is_uvc(&cfg.driver) {
-        if let Err(e) = registry::resolve(&mut cfg).await {
-            warn!(error = %e, "UVC detection failed; using the uncalibrated fallback");
-            cfg.profile = Some("uvc_generic".into());
-        }
-    }
-    let driver: Arc<dyn CameraDriver> = Arc::from(registry::build(&cfg)?);
-    let hub = FrameHub::new(512);
-    let connected = Arc::new(AtomicBool::new(false));
-    std::fs::create_dir_all(&data_dir)
-        .with_context(|| format!("creating {}", data_dir.display()))?;
-    let video = thermolink::video::spawn(hub.clone(), 960, 15);
-    if video.is_none() {
-        tracing::warn!("ffmpeg unavailable — visible view disabled");
-    }
-    let state = Arc::new(AppState::new(
-        driver.spec(),
-        hub.clone(),
-        driver.id().to_string(),
-        connected.clone(),
-        video,
+    let bind: std::net::SocketAddr = bind
+        .parse()
+        .with_context(|| format!("invalid bind address {bind:?}"))?;
+    let https_addr: std::net::SocketAddr = "0.0.0.0:8443".parse()?;
+    let running = thermolink::runtime::start(thermolink::runtime::RuntimeConfig {
         driver,
-        cfg.host.clone(),
-        data_dir.clone(),
-    ));
-
-    tokio::spawn(camera_supervisor(state.clone()));
-    server::spawn_monitor(state.clone());
-    server::spawn_prerecorder(state.clone());
-
-    let listener = tokio::net::TcpListener::bind(&bind)
-        .await
-        .with_context(|| format!("binding {bind}"))?;
-    info!(%bind, "ThermoLink web UI ready");
-
-    match ensure_tls_cert(&data_dir) {
-        Ok((cert, key)) => {
-            match axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await {
-                Ok(tls) => {
-                    let addr: std::net::SocketAddr = "0.0.0.0:8443".parse()?;
-                    let https_router =
-                        server::router(state.clone()).layer(axum::middleware::from_fn(mark_https));
-                    tokio::spawn(async move {
-                        if let Err(e) = axum_server::bind_rustls(addr, tls)
-                            .serve(
-                                https_router
-                                    .into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                            )
-                            .await
-                        {
-                            warn!(error = %e, "https listener stopped");
-                        }
-                    });
-                    info!(%addr, "ThermoLink HTTPS ready (self-signed)");
-                }
-                Err(e) => warn!(error = %e, "https disabled: certificate could not be loaded"),
-            }
-        }
-        Err(e) => warn!(error = %e, "https disabled: certificate could not be created"),
-    }
-
-    axum::serve(
-        listener,
-        server::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
+        host,
+        control_port,
+        media_port,
+        profile,
+        bind,
+        demo,
+        data_dir,
+        tls: true,
+        https_addr,
+    })
     .await?;
-    Ok(())
-}
-
-/// Owns the camera connection: open, read, publish, reconnect.
-async fn camera_supervisor(st: Arc<AppState>) {
-    let mut gen = st.camera_gen.subscribe();
-    let mut backoff = 2u64;
-    loop {
-        let before = *gen.borrow();
-        let runtime = st.camera.load_full();
-        let driver = runtime.driver.clone();
-        match tokio::time::timeout(Duration::from_secs(20), driver.open()).await {
-            Ok(Ok(mut session)) => {
-                st.connected.store(true, Ordering::Relaxed);
-                // The pre-open spec cannot know a negotiated UVC frame size or
-                // the device auto-detection selected. Adopt the session's
-                // spec so /api/spec and the UI reflect the live camera.
-                let session_spec = session.spec().clone();
-                let runtime = st.camera.load_full();
-                st.camera.store(Arc::new(CameraRuntime {
-                    driver: runtime.driver.clone(),
-                    spec: session_spec,
-                }));
-                info!(driver = driver.id(), "camera session open");
-                loop {
-                    tokio::select! {
-                        r = session.next_frame() => match r {
-                            Ok(frame) => {
-                                backoff = 2;
-                                st.hub.publish(frame).await;
-                            }
-                            Err(e) => { warn!(error = %e, "camera stream ended"); break; }
-                        },
-                        _ = gen.changed() => break,
-                    }
-                }
-                session.close().await;
-                st.connected.store(false, Ordering::Relaxed);
-            }
-            Ok(Err(e)) => warn!(error = %e, "camera connect failed"),
-            Err(_) => warn!(driver = driver.id(), "camera open timed out"),
-        }
-        if *gen.borrow() != before {
-            continue;
-        }
-        tokio::time::sleep(Duration::from_secs(backoff)).await;
-        backoff = (backoff * 2).min(60);
-    }
+    running.wait().await
 }
 
 fn camera_config(driver: String, host: String, control_port: u16, media_port: u16) -> CameraConfig {

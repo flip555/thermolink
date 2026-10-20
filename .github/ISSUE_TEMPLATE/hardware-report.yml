@@ -1,0 +1,93 @@
+name: Hardware report
+description: Report a thermal camera so ThermoLink can validate or improve its profile.
+title: "[Hardware] "
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing real hardware. A raw frame or short capture is the most useful
+        evidence. Please remove serial numbers or other personal data before attaching files.
+
+  - type: input
+    id: model
+    attributes:
+      label: Camera model
+      placeholder: "TOPDON TC001, InfiRay P2 Pro, Hti HT-301, Xtherm T2S+, HIKMICRO Mini2, ..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: ThermoLink profile
+      description: The profile selected in ThermoLink, if any.
+      options:
+        - topdon_tc001
+        - infiray_p2pro
+        - topdon_tc002c
+        - ht301
+        - xtherm_t2s
+        - hik_mini2
+        - uvc_generic
+        - qianli
+        - p3
+        - unknown
+    validations:
+      required: true
+
+  - type: input
+    id: vid_pid
+    attributes:
+      label: USB VID:PID
+      description: From lsusb on Linux, System Information → USB on macOS, or Device Manager on Windows.
+      placeholder: "0bda:5830"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and ThermoLink version
+      placeholder: "macOS 27.0.1, ThermoLink 0.4.0 (commit ...)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Thermal stream works
+        - Thermal and visible streams work
+        - Detected, but no thermal stream
+        - Not detected
+        - Wrong image, layout or temperature
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What worked, what failed, the resolution/geometry, and any logs or errors.
+      placeholder: "Profile, frame size, expected temperature, observed temperature, commands used..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: capture
+    attributes:
+      label: Raw capture or fixture
+      description: Attach a raw frame or short capture, or paste a link. Include the exact profile and command used.
+      placeholder: "Drag files here, or paste a URL."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: permission
+    attributes:
+      label: Permission
+      options:
+        - label: This capture may be used as an offline test fixture.
+          required: false

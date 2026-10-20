@@ -15,6 +15,40 @@
   hardware still needed for each model.
 - All new profiles are `tested: false`; no hardware support is claimed.
 
+## Unreleased — desktop shell
+
+- Phase 4A: shared `src/runtime.rs` for `thermolink serve` and the desktop
+  shell. `RunningServer` exposes the bound address, graceful shutdown and a
+  join handle; the camera supervisor and TLS/HTTPS setup moved out of
+  `main.rs`.
+- Phase 4B: Tauri 2 desktop crate at `desktop/src-tauri`. It starts the same
+  runtime on `127.0.0.1:0`, opens the UI in a webview at the bound address, and
+  shuts the server down on exit.
+- CI: added a Linux `desktop` job that installs WebKitGTK/GTK dependencies and
+  runs `cargo check`/`clippy` for `thermolink-desktop`.
+- macOS: added `NSLocalNetworkUsageDescription`, `signingIdentity: "-"` so
+  Tauri ad-hoc signs every bundle, and desktop file logging. The linker-signed
+  debug bundle left `Info.plist` unbound and made macOS ignore Local Network
+  permission; proper bundle signing fixed it. `desktop/sign-macos-dev.sh` is a
+  fallback for other builds.
+- Desktop now honors `THERMOLINK_FFMPEG` and checks
+  `Contents/Resources/ffmpeg`, enabling a bundled static ffmpeg. Verified the
+  Qianli thermal and visible streams with a local static build; that test
+  binary is GPL/nonfree and must not be redistributed.
+- Added `desktop/build-lgpl-ffmpeg.sh` and `desktop/package-macos-dev.sh` to
+  build and bundle an LGPL static FFmpeg reproducibly; the binary stays
+  git-ignored, with its license copied into the app bundle.
+- Bundle LGPL FFmpeg on every desktop target: BtbN LGPL builds for Linux and
+  Windows in CI, source build for macOS. Tauri resources include `resources/*`
+  and the app resolves `ffmpeg`/`ffmpeg.exe` from the resource root or
+  `resources/` subdirectory.
+- Camera UI: Auto-detect is now explicitly UVC-only; Qianli users are pointed at
+  Discover cameras.
+- The release workflow now builds unsigned desktop bundles on Linux, macOS and
+  Windows and uploads them as workflow artifacts. Attaching those bundles to
+  the GitHub release and code signing remain follow-ups; macOS/Windows are
+  unvalidated, and Linux is the reference platform.
+
 ## Unreleased — 0.5.0 (M1)
 
 - New unified `src/camera/uvc_radiometric/` family: one driver, data-only

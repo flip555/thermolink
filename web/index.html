@@ -763,8 +763,14 @@ async function loadDrivers() {
 }
 
 $("driverApply").onclick = async () => {
-  const body = { driver: $("driverSel").value };
-  if ($("driverSel").value === "uvc_radiometric" && $("profileSel").value) {
+  const driver = $("driverSel").value;
+  const body = { driver };
+  if (driver === "qianli") {
+    const host = prompt("Qianli camera IP address", "172.20.1.85");
+    if (!host) return;
+    body.host = host.trim();
+  }
+  if (driver === "uvc_radiometric" && $("profileSel").value) {
     body.profile = $("profileSel").value;
   }
   const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
@@ -777,6 +783,10 @@ $("driverApply").onclick = async () => {
 };
 
 $("detectBtn").onclick = async () => {
+  if ($("driverSel").value !== "uvc_radiometric") {
+    $("detectState").textContent = "Auto-detect is for UVC cameras; use Discover cameras for Qianli.";
+    return;
+  }
   $("detectState").textContent = "probing…";
   try {
     const d = await (await fetch("/api/camera/detect")).json();
