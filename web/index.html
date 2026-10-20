@@ -1490,12 +1490,12 @@ function mjpegFallback(reason) {
   if (vcanvas) vcanvas.style.display="none";
   const vis=$("vis"); vis.style.display="block";
   vis.src=withToken("/api/video.mjpg?t="+Date.now());
-  console.warn("visible feed: MJPEG fallback - "+(reason||"unavailable"));
+  console.warn("visible_path=mjpeg reason="+(reason||"unavailable"));
 }
 function startVisibleCodec() {
   if (!vcanvas || !vctx) return;
   $("vlink").innerHTML = '<span class="warn">codec…</span>';
-  let au=[], spsNal=null, ppsNal=null, ts=0, configured=false, buf=new Uint8Array(0), gotFrame=false;
+  let au=[], spsNal=null, ppsNal=null, ts=0, configured=false, probePending=false, buf=new Uint8Array(0), gotFrame=false;
   const hex=(n)=>("0"+n.toString(16)).slice(-2);
   function flushAU() {
     if (!au.length) return;
@@ -1509,23 +1509,40 @@ function startVisibleCodec() {
     for (const n of au) if (n.type===5) key=true;
     au=[];
     if (first) {
+      if (probePending) return;
       const sp=spsNal.slice(sc(spsNal));
+      const cfg={codec:"avc1."+hex(sp[1])+hex(sp[2])+hex(sp[3]), optimizeForLatency:true};
+      let probe;
       try {
-        vcDecoder=new VideoDecoder({
-          output:(f)=>{
-            vcLastFrame=Date.now(); vcBackoff=1;
-            if (!gotFrame) { gotFrame=true; $("vlink").innerHTML='<span class="ok">WebCodecs</span>'; }
-            if (vcanvas.width!==f.displayWidth || vcanvas.height!==f.displayHeight) {
-              vcanvas.width=f.displayWidth; vcanvas.height=f.displayHeight;
-            }
-            try { vctx.drawImage(f,0,0); } catch(e) {}
-            f.close();
-          },
-          error:()=>mjpegFallback("decoder error")
-        });
-        vcDecoder.configure({codec:"avc1."+hex(sp[1])+hex(sp[2])+hex(sp[3]), optimizeForLatency:true});
-        configured=true;
-      } catch(e) { mjpegFallback("configure failed"); return; }
+        probe=(typeof VideoDecoder.isConfigSupported==="function")
+          ? VideoDecoder.isConfigSupported(cfg)
+          : Promise.resolve({supported:true, config:cfg});
+      } catch(e) { mjpegFallback("probe failed"); return; }
+      probePending=true;
+      Promise.resolve(probe).then((r)=>{
+        if (vcFallback) return;
+        if (!r || !r.supported) { mjpegFallback("WebCodecs probe rejected"); return; }
+        try {
+          vcDecoder=new VideoDecoder({
+            output:(f)=>{
+              vcLastFrame=Date.now(); vcBackoff=1;
+              if (!gotFrame) { gotFrame=true; $("vlink").innerHTML='<span class="ok">WebCodecs</span>'; }
+              if (vcanvas.width!==f.displayWidth || vcanvas.height!==f.displayHeight) {
+                vcanvas.width=f.displayWidth; vcanvas.height=f.displayHeight;
+              }
+              try { vctx.drawImage(f,0,0); } catch(e) {}
+              f.close();
+            },
+            error:()=>mjpegFallback("decoder error")
+          });
+          vcDecoder.configure(r.config || cfg);
+          configured=true; probePending=false;
+          vcDecoder.decode(new EncodedVideoChunk({type:key?"key":"delta",timestamp:ts,data:out}));
+          ts+=66667;
+          console.info("visible_path=webcodecs");
+        } catch(e) { mjpegFallback("configure failed"); }
+      }).catch(()=>mjpegFallback("WebCodecs probe failed"));
+      return;
     }
     try { vcDecoder.decode(new EncodedVideoChunk({type:key?"key":"delta",timestamp:ts,data:out})); ts+=66667; }
     catch(e) {}
@@ -1577,8 +1594,13 @@ function startVisibleCodec() {
     } catch(e) { mjpegFallback("no raw stream"); }
   })();
 }
-if (("VideoDecoder" in window) && !/[?&]mjpeg=1/.test(location.search)) startVisibleCodec();
-else mjpegFallback(("VideoDecoder" in window) ? "mjpeg forced" : "no VideoDecoder");
+const videoQuery=new URLSearchParams(location.search);
+let videoMode=(videoQuery.get("video") || (videoQuery.has("mjpeg") ? "mjpeg" : "auto")).toLowerCase();
+if (!["auto","webcodecs","mjpeg"].includes(videoMode)) videoMode="auto";
+if (videoMode === "mjpeg") mjpegFallback("mjpeg requested");
+else if (!("VideoDecoder" in window)) mjpegFallback("no VideoDecoder");
+else if (!window.isSecureContext) mjpegFallback("insecure context");
+else startVisibleCodec();
 setInterval(()=>{
   if (!vcOn || vcFallback || document.hidden) return;
   const now=Date.now();

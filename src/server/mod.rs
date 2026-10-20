@@ -726,6 +726,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/camera/select", post(select_camera))
         .route("/api/camera/detect", get(camera_detect))
         .route("/api/health", get(health))
+        .route("/api/video/capabilities", get(video_capabilities))
         .route("/api/thermal.json", get(thermal_json))
         .route("/api/thermal.jpg", get(thermal_jpg))
         .route("/api/thermal.mjpg", get(thermal_mjpg))
@@ -1448,6 +1449,18 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "video_restarts": st.video.as_ref().map(|v| v.restarts()).unwrap_or(0),
         "video_error": st.video.as_ref().and_then(|v| v.last_error()),
         "seq": latest.map(|f| f.seq).unwrap_or(0),
+    }))
+}
+
+async fn video_capabilities(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let spec = st.camera.load_full().spec.clone();
+    let ffmpeg = crate::video::ffmpeg_info();
+    let visible = spec.video.is_some();
+    Json(json!({
+        "server_decode": ffmpeg.source.as_str(),
+        "server_decode_working": ffmpeg.working,
+        "raw_h264": visible,
+        "mjpeg": visible && ffmpeg.working,
     }))
 }
 

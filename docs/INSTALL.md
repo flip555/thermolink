@@ -14,6 +14,18 @@ The desktop app is self-contained: it bundles the LGPL FFmpeg binary used for
 the visible stream. The CLI needs `ffmpeg` on `PATH` for visible video; thermal
 works without it.
 
+## Visible video path
+
+The browser UI prefers WebCodecs when the webview supports H.264. Otherwise it
+uses MJPEG from the bundled/server FFmpeg:
+
+- Desktop: WebCodecs → bundled FFmpeg → MJPEG. No system FFmpeg is required.
+- CLI: WebCodecs → `THERMOLINK_FFMPEG` / `PATH` FFmpeg → MJPEG.
+
+Use `?video=webcodecs`, `?video=mjpeg` or `?video=auto` to override; the older
+`?mjpeg=1` still forces MJPEG. If WebCodecs is forced but unsupported, the UI
+falls back to MJPEG with a console reason.
+
 ## Current signing status
 
 These builds are **not code-signed or notarized yet**. macOS needs an Apple

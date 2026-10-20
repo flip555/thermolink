@@ -35,6 +35,7 @@ fn main() {
                 ] {
                     if bundled.is_file() {
                         std::env::set_var("THERMOLINK_FFMPEG", bundled);
+                        std::env::set_var("THERMOLINK_FFMPEG_BUNDLED", "1");
                         break;
                     }
                 }
