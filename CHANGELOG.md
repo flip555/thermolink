@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Phase 3 profiles
+
+- Added `topdon_tc002c`, `ht301`, `xtherm_t2s` and `hik_mini2` profiles ported
+  from public reverse-engineering projects.
+- HT301/T2S+ use per-frame table calibration (65,536-entry LUT); TC002C uses
+  an empirical device-temperature calibration; HIK Mini2 exposes a relative
+  Y-channel image with `radiometric: false`.
+- The Linux UVC transport applies the HT301/T2S raw-mode command through the
+  V4L2 zoom control before starting ffmpeg.
+- Added synthetic layout/calibration tests and new fingerprint tests.
+- All new profiles are `tested: false`; no hardware support is claimed.
+
 ## Unreleased — 0.5.0 (M1)
 
 - New unified `src/camera/uvc_radiometric/` family: one driver, data-only

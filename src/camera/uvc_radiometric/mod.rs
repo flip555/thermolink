@@ -8,6 +8,7 @@ pub mod detect;
 pub mod fingerprint;
 pub mod layout;
 pub mod profiles;
+pub mod radiometry;
 pub mod transport;
 pub mod types;
 
@@ -182,6 +183,7 @@ impl CameraSession for UvcSession {
     async fn next_frame(&mut self) -> Result<CameraFrame> {
         let bytes = self.stream.next_frame().await?;
         let extracted = self.layout.extract(&bytes)?;
+        let (calibration, lut) = self.profile.radiometry.for_frame(&extracted);
         self.seq += 1;
         Ok(CameraFrame {
             stream: StreamKind::Thermal,
@@ -191,8 +193,8 @@ impl CameraSession for UvcSession {
                 width: extracted.width,
                 height: extracted.height,
                 raw: extracted.raw,
-                calibration: self.profile.radiometry.calibration(),
-                lut: None,
+                calibration,
+                lut,
             }),
         })
     }

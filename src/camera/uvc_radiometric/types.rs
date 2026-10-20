@@ -60,6 +60,12 @@ pub enum FrameLayout {
         metadata_rows: u32,
         raw_mode: RawMode,
     },
+    /// HIKMICRO Mini2: thermal data is the Y channel of a YUYV frame.
+    YuyvY8 {
+        width: u32,
+        height: u32,
+        frame_height: u32,
+    },
     /// Best-effort fallback: treat the frame as u16 samples. No calibration
     /// claim is made; `radiometric` must be false.
     UnknownRawU16 { width: u32, height: u32 },
@@ -73,6 +79,7 @@ pub struct DeviceTemp {
     pub offset: u32,
     pub divisor: f32,
     pub offset_c: f32,
+    pub big_endian: bool,
 }
 
 /// How raw samples become Celsius.
@@ -127,6 +134,8 @@ pub struct StreamConfig {
     pub height: Option<u32>,
     pub fourcc: [u8; 4],
     pub fps: Option<u32>,
+    /// Optional V4L2 zoom-control value applied before streaming.
+    pub raw_mode: Option<u32>,
 }
 
 /// Negotiated UVC stream format.

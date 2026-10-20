@@ -1543,6 +1543,7 @@ dependencies = [
  "clap",
  "futures-core",
  "jpeg-encoder",
+ "libc",
  "nusb",
  "rand_core 0.6.4",
  "reqwest",

@@ -55,4 +55,28 @@ pub static FINGERPRINTS: &[Fingerprint] = &[
         profile_id: "infiray_p2pro",
         confidence: Confidence::Documented,
     },
+    // Hti HT-301.
+    Fingerprint {
+        vid: 0x1514,
+        pid: 0x0001,
+        product_substring: None,
+        profile_id: "ht301",
+        confidence: Confidence::Documented,
+    },
+    // Xtherm T2S+ v2.
+    Fingerprint {
+        vid: 0x04b4,
+        pid: 0x0100,
+        product_substring: None,
+        profile_id: "xtherm_t2s",
+        confidence: Confidence::Inferred,
+    },
+    // HIKMICRO Mini2 (probable; not confirmed for every Mini2 firmware).
+    Fingerprint {
+        vid: 0x2bdf,
+        pid: 0x0102,
+        product_substring: None,
+        profile_id: "hik_mini2",
+        confidence: Confidence::Inferred,
+    },
 ];

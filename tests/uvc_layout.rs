@@ -64,3 +64,55 @@ fn short_frames_are_errors_not_panics() {
     };
     assert!(layout.extract(&[0u8; 10]).is_err());
 }
+
+#[test]
+fn packed_layout_captures_metadata_rows() {
+    let layout = FrameLayout::PackedYuyvU16 {
+        width: 4,
+        height: 1,
+        frame_height: 2,
+        thermal_rows: 1,
+        metadata_rows: 1,
+        image_start_row: 1,
+        device_temp: None,
+    };
+    let mut frame = vec![0u8; 16];
+    frame[8..12].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    let out = layout.extract(&frame).expect("extract");
+    let metadata = out.metadata.expect("metadata");
+    assert_eq!(metadata.len(), 8);
+    assert_eq!(&metadata[..4], &[0xaa, 0xbb, 0xcc, 0xdd]);
+}
+
+#[test]
+fn raw_u16_layout_captures_metadata_rows() {
+    let layout = FrameLayout::RawU16WithMetadata {
+        width: 2,
+        height: 2,
+        metadata_rows: 1,
+        raw_mode: thermolink::camera::uvc_radiometric::types::RawMode::V4l2Zoom(0x8004),
+    };
+    let mut frame = vec![0u8; 12];
+    frame[8..12].copy_from_slice(&[1, 2, 3, 4]);
+    let out = layout.extract(&frame).expect("extract");
+    assert_eq!(out.raw.len(), 8);
+    assert_eq!(out.metadata.expect("metadata").as_ref(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn yuyv_y8_extracts_the_y_channel() {
+    let layout = FrameLayout::YuyvY8 {
+        width: 2,
+        height: 2,
+        frame_height: 2,
+    };
+    // Y0 U0 Y1 V0 per row.
+    let frame = [10u8, 0x80, 20, 0x80, 30, 0x80, 40, 0x80];
+    let out = layout.extract(&frame).expect("extract");
+    let values: Vec<u16> = out
+        .raw
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    assert_eq!(values, vec![10, 20, 30, 40]);
+}

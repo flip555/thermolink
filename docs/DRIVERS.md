@@ -81,6 +81,10 @@ One driver, data-only profiles. M1 ships three profiles:
 |---------|---------|--------|------------|--------|
 | `topdon_tc001` | `0bda:5830` | 256×384 YUYV; bottom half u16 LE, 256×192 | linear, 1/64 K | no |
 | `infiray_p2pro` | `0bda:5830` | same as TC001 | linear, 1/64 K | no |
+| `topdon_tc002c` | unknown (explicit profile) | 256×392 YUYV; packed raw16 + metadata + image | empirical device-temperature fit | no |
+| `ht301` | `1514:0001` | 384×288 raw U16 + 4 metadata rows | per-frame table | no |
+| `xtherm_t2s` | T2S+ v1 `1514:xxxx`, v2 `04b4:0100` | 256×192 raw U16 + 4 metadata rows | per-frame table | no |
+| `hik_mini2` | `2bdf:0102` (probable) | 256×192 YUYV Y-channel | relative only; `radiometric: false` | no |
 | `uvc_generic` | any UVC | best-effort raw view | unknown; `radiometric: false` | no |
 
 - Transport: Linux V4L2 through ffmpeg's `v4l2` input. ffmpeg is already a
@@ -95,6 +99,13 @@ One driver, data-only profiles. M1 ships three profiles:
   selector to force one.
 - `uvc_generic` streams a best-effort raw view with `radiometric: false`.
   Temperature measurement is hidden by the UI and rejected by the API.
+- `topdon_tc002c`, `ht301`, `xtherm_t2s` and `hik_mini2` are ported from public
+  reverse-engineering projects. They are likely-working implementations, not
+  hardware-validated ones. `topdon_tc002c` has no published VID/PID and must be
+  selected explicitly; HIK Mini2 is relative-only until per-unit polynomial
+  coefficients are supplied.
+- HT301/T2S+ require the UVC zoom-unit raw-mode command (`0x8004`). The Linux
+  transport applies it with a V4L2 `VIDIOC_S_CTRL` before starting ffmpeg.
 - Controls (shutter, gain, palette) are **not exposed in M1**. The P2 Pro
   vendor command set is documented for a later phase.
 - **No hardware validation has been performed by this project.** Every new
