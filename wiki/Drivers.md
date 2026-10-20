@@ -4,7 +4,7 @@
 |----|-----------|---------|---------|--------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full |
 | `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser; hardware validation pending |
-| `uvc_radiometric` | USB/UVC (Linux) | 160×120–384×288 | — | unified profiles: TC001/P2 Pro/TC002C/HT301/T2S+/Mini2 + generic; **untested** |
+| `uvc_radiometric` | USB/UVC (Linux) | 160×120–384×288 | — | TC001/P2 Pro/TC002C/HT301/T2S+/Mini2 + generic; **experimental** |
 | `mock` | in-process | 160×120 | — | simulator |
 
 A driver owns transport, framing, pixels and calibration. The server consumes
@@ -51,3 +51,16 @@ still pending.
 
 The UVC path uses Linux V4L2 through ffmpeg. All new UVC profiles are
 `tested: false`; see [docs/DRIVERS.md](https://github.com/flip555/thermolink/blob/main/docs/DRIVERS.md).
+
+### Testing an unvalidated profile
+
+1. Set **Camera → Driver** to `uvc_radiometric`.
+2. Pick the closest profile; the dropdown shows `validated`,
+   `ported — unvalidated`, `needs hardware` or `needs research`.
+3. Click **Use driver**.
+4. If it works or fails, click **Report hardware / capture** and include the
+   VID:PID, profile and a raw frame.
+
+Ported protocol code is not validation; every UVC profile remains experimental
+until a real unit and capture confirm the layout/calibration. The hardware
+report issue form is the path to promoting one.

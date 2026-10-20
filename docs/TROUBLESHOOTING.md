@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## macOS or Windows says the desktop app is unsafe
+
+The current desktop builds are **unsigned**. They are not malware, but the OS
+cannot verify a publisher yet.
+
+- macOS: right-click **ThermoLink.app → Open**, or use
+  **System Settings → Privacy & Security → Open Anyway**.
+- Windows: SmartScreen → **More info → Run anyway**.
+- Linux AppImage: `chmod +x ThermoLink-*.AppImage` before running.
+
+Verify the release `SHA256SUMS-*.txt` before running an unsigned artifact. See
+[INSTALL.md](INSTALL.md). macOS notarization needs a paid Apple Developer
+Program membership; Windows needs an OV/EV code-signing certificate.
+
+## macOS desktop has no visible feed
+
+- Visible video needs the bundled FFmpeg; a packaged app should already include
+  it under `Contents/Resources/resources/ffmpeg`.
+- Allow ThermoLink in **System Settings → Privacy & Security → Local Network**,
+  then relaunch. Without the local-network grant the camera connection fails
+  with `No route to host`.
+- The UI uses MJPEG on WKWebView; that is expected. Hover the `MJPEG` label for
+  the fallback reason.
+
 ## HTTPS login succeeds but every API call is 401
 
 Symptom: the login POST returns 200 (or sessions appear in `sessions.json`), but

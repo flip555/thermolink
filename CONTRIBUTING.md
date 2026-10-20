@@ -25,3 +25,13 @@ byte captures make the best fixtures.
 - Do not commit `thermolink-data/`, snapshots, captures, tokens or TLS keys.
 - By contributing you agree your work is licensed under the repository's MIT
   licence.
+
+## Branch and release policy
+
+- Work on a branch and open a PR into `main`; do not push feature work directly
+  to `main`.
+- Keep PRs scoped and green before merging.
+- Release artifacts are built only for `v*` tags by `release.yml`.
+- `desktop-package.yml` is a manual (`workflow_dispatch`) helper. Do not add
+  push triggers that build installers for routine changes; they consume GitHub
+  Actions minutes.

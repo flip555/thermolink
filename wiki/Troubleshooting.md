@@ -1,5 +1,18 @@
 # Troubleshooting
 
+## macOS or Windows blocked the desktop app
+
+The current desktop builds are unsigned.
+
+- macOS: right-click **ThermoLink.app → Open**, or use
+  **System Settings → Privacy & Security → Open Anyway**.
+- Windows: SmartScreen → **More info → Run anyway**.
+- Linux AppImage: `chmod +x` before running.
+
+Verify the release `SHA256SUMS-*.txt` first. macOS notarization needs a paid
+Apple Developer Program membership; Windows needs an OV/EV certificate. See
+[Installation](Installation).
+
 ## Login works but everything is 401
 
 Hard-refresh; the page should store `thermolink.token` and send it as a Bearer
