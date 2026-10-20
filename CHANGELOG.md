@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1 — 2026-10-20
+
+- Desktop quick controls for the ΔT reference image and thermal opacity.
+- Visible-stream recovery after re-analysis, blank streams, and permission/focus
+  changes.
+- Built-in isotherm presets for body, electronics, building and fire ranges.
+- Short Git SHA in `/api/version` and the Build field; unsupported desktop
+  update controls are hidden.
+- Install/run documentation, unsigned-build guidance and SHA-256 release
+  checksums.
+- Security fixes for TLS advisories, stored-file path validation, and test-only
+  hard-coded passwords.
+
 ## Unreleased — Phase 3 profiles
 
 - Added `topdon_tc002c`, `ht301`, `xtherm_t2s` and `hik_mini2` profiles ported
