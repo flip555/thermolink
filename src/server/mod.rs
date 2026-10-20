@@ -1308,9 +1308,16 @@ async fn i18n_file(AxumPath(file): AxumPath<String>) -> Response {
 async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let mut list = Vec::new();
     for id in crate::camera::registry::KNOWN {
+        // A fresh install has no camera host yet. Qianli still needs to appear
+        // in the driver picker so the user can enter its address.
+        let host = if *id == "qianli" && st.camera_host.is_empty() {
+            "0.0.0.0".to_string()
+        } else {
+            st.camera_host.clone()
+        };
         let cfg = crate::config::CameraConfig {
             driver: id.to_string(),
-            host: st.camera_host.clone(),
+            host,
             ..Default::default()
         };
         if let Ok(d) = crate::camera::registry::build(&cfg) {

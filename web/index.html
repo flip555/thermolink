@@ -756,8 +756,14 @@ async function loadDrivers() {
 }
 
 $("driverApply").onclick = async () => {
-  const body = { driver: $("driverSel").value };
-  if ($("driverSel").value === "uvc_radiometric" && $("profileSel").value) {
+  const driver = $("driverSel").value;
+  const body = { driver };
+  if (driver === "qianli") {
+    const host = prompt("Qianli camera IP address", "172.20.1.85");
+    if (!host) return;
+    body.host = host.trim();
+  }
+  if (driver === "uvc_radiometric" && $("profileSel").value) {
     body.profile = $("profileSel").value;
   }
   const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
