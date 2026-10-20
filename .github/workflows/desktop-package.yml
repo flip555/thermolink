@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/desktop-runtime
+      - main
     paths:
       - .github/workflows/desktop-package.yml
       - Cargo.toml
