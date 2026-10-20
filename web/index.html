@@ -1402,8 +1402,7 @@ function exitReanalysis() {
   $("reBanner").style.display = "none";
   state.feedStarted = false; state.visStarted = false; state.codecActive = false;
   $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); state.feedStarted = true;
-  $("vis").style.display = "block";
-  $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); state.visStarted = true;
+  resetVisiblePath("exit reanalysis");
   applyWipe();
   loadRegions();
 }
@@ -1487,7 +1486,7 @@ for (const b of document.querySelectorAll("button[data-pip]")) b.onclick = () =>
 // ---------- WebCodecs visible path ----------
 const vcanvas = $("vidcanvas");
 const vctx = vcanvas ? vcanvas.getContext("2d") : null;
-let vcOn=false, vcDecoder=null, vcFallback=false, vcLastFrame=0, vcReader=null, vcStart=0, vcBackoff=1;
+let vcOn=false, vcDecoder=null, vcFallback=false, vcLastFrame=0, vcReader=null, vcStart=0, vcBackoff=1, visibleResetAt=0;
 function mjpegFallback(reason) {
   if (vcFallback) return;
   $("vlink").innerHTML = '<span class="warn">MJPEG</span>';
@@ -1500,6 +1499,23 @@ function mjpegFallback(reason) {
   const vis=$("vis"); vis.style.display="block";
   vis.src=withToken("/api/video.mjpg?t="+Date.now());
   console.warn("visible_path=mjpeg reason="+(reason||"unavailable"));
+}
+function resetVisiblePath(reason) {
+  try { if (vcDecoder) vcDecoder.close(); } catch(e) {}
+  try { if (vcReader) vcReader.cancel(); } catch(e) {}
+  vcDecoder=null; vcReader=null; vcOn=false; vcFallback=false; vcLastFrame=0; vcStart=0; vcBackoff=1;
+  state.codecActive=false; state.visStarted=false;
+  const canvas=$("vidcanvas"); if (canvas) canvas.style.display="none";
+  const vis=$("vis"); vis.style.display="block"; vis.removeAttribute("src");
+  $("vlink").innerHTML="–";
+  if (!state.caps || !state.caps.visible) return;
+  if (videoMode !== "mjpeg" && ("VideoDecoder" in window) && window.isSecureContext) {
+    startVisibleCodec();
+  } else {
+    vis.src=withToken("/api/video.mjpg?t="+Date.now());
+    state.visStarted=true;
+  }
+  console.info("visible_path=reset reason="+(reason||"manual"));
 }
 function startVisibleCodec() {
   if (!vcanvas || !vctx) return;
@@ -1662,6 +1678,9 @@ async function poll() {
     }
     if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); }
     if (d.video && !state.visStarted && !state.codecActive) { state.visStarted = true; $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); }
+    if (d.video && !state.codecActive && state.visStarted && $("vis").complete && $("vis").naturalWidth === 0 && Date.now() - visibleResetAt > 6000) {
+      visibleResetAt = Date.now(); resetVisiblePath("blank visible retry");
+    }
     if (!ready || !d.stats) return;
     if (!state.reanalysis) {
       const s=d.stats;
@@ -1681,6 +1700,13 @@ async function poll() {
 
 $("feed").onerror = () => { state.feedStarted=false; setTimeout(()=>{ $("feed").src=withToken("/api/thermal.mjpg?t="+Date.now()); state.feedStarted=true; }, 2000); };
 $("vis").onerror = () => { state.visStarted=false; setTimeout(()=>{ $("vis").src=withToken("/api/video.mjpg?t="+Date.now()); state.visStarted=true; }, 2000); };
+window.addEventListener("focus", () => {
+  if (!state.caps || !state.caps.visible || state.codecActive) return;
+  const vis=$("vis");
+  if (vis && vis.complete && vis.naturalWidth === 0 && Date.now() - visibleResetAt > 4000) {
+    visibleResetAt = Date.now(); resetVisiblePath("focus retry");
+  }
+});
 
 // ---------- startup ----------
 initLangPicker();
@@ -1704,8 +1730,13 @@ async function loadVersion() {
   try {
     const d = await (await fetch("/api/version", {cache:"no-store"})).json();
     $("ver").textContent = d.version || "–";
-    $("verBuild").textContent = d.version || "–";
+    $("verBuild").textContent = (d.version || "–") + (d.build && d.build !== "unknown" ? "+" + d.build : "");
     $("verRepo").textContent = d.repo || "–";
+    const supported = d.update_supported !== false;
+    for (const id of ["updCheck", "updInstall", "updRestart"]) {
+      const el = $(id); if (el) el.style.display = supported ? "" : "none";
+    }
+    if (!supported) $("updState").textContent = "Updates are not available in this build.";
   } catch (e) {}
 }
 $("updCheck").onclick = async () => {

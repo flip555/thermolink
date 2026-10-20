@@ -3231,10 +3231,14 @@ async fn send_notifications(st: &Arc<AppState>, text: &str) {
 }
 
 async fn version() -> Json<serde_json::Value> {
+    let update_supported =
+        cfg!(target_os = "linux") && std::env::var_os("THERMOLINK_DESKTOP").is_none();
     Json(json!({
         "ok": true,
         "name": "thermolink",
         "version": env!("CARGO_PKG_VERSION"),
+        "build": option_env!("GIT_SHA").unwrap_or("unknown"),
+        "update_supported": update_supported,
         "repo": crate::update::repo(),
     }))
 }
