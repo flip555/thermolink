@@ -8,7 +8,21 @@ use thermolink::runtime::{RunningServer, RuntimeConfig};
 
 struct ServerState(Mutex<Option<RunningServer>>);
 
+fn init_logging() {
+    let path = std::env::temp_dir().join("thermolink-desktop.log");
+    if let Ok(file) = std::fs::File::create(path) {
+        let writer = Mutex::new(file);
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("thermolink=debug"));
+        let _ = tracing_subscriber::fmt()
+            .with_writer(writer)
+            .with_env_filter(filter)
+            .try_init();
+    }
+}
+
 fn main() {
+    init_logging();
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;

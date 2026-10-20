@@ -38,6 +38,19 @@ The release workflow builds unsigned bundles on Linux, macOS and Windows and
 uploads them as workflow artifacts. Attaching them to the GitHub release and
 code signing are follow-ups.
 
+### macOS Local Network permission
+
+Tauri's debug bundle is linker-signed by default, which leaves `Info.plist`
+unbound and can make macOS ignore the Local Network permission toggle. After a
+debug build, re-sign the bundle ad-hoc:
+
+```bash
+./desktop/sign-macos-dev.sh
+```
+
+Then allow ThermoLink under **System Settings → Privacy & Security → Local
+Network**. A distributed build should use a Developer ID identity instead.
+
 ## Current scope
 
 - Localhost only. Network sharing is a later opt-in feature.

@@ -11,6 +11,11 @@
   shuts the server down on exit.
 - CI: added a Linux `desktop` job that installs WebKitGTK/GTK dependencies and
   runs `cargo check`/`clippy` for `thermolink-desktop`.
+- macOS: added `NSLocalNetworkUsageDescription`, a `desktop/sign-macos-dev.sh`
+  script, and desktop file logging. Tauri's debug bundle is linker-signed;
+  re-signing the whole bundle makes macOS apply the Local Network permission.
+- Camera UI: Auto-detect is now explicitly UVC-only; Qianli users are pointed at
+  Discover cameras.
 - The release workflow now builds unsigned desktop bundles on Linux, macOS and
   Windows and uploads them as workflow artifacts. Attaching those bundles to
   the GitHub release and code signing remain follow-ups; macOS/Windows are

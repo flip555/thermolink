@@ -4127,6 +4127,8 @@ dependencies = [
  "tauri",
  "tauri-build",
  "thermolink",
+ "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

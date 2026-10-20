@@ -770,6 +770,10 @@ $("driverApply").onclick = async () => {
 };
 
 $("detectBtn").onclick = async () => {
+  if ($("driverSel").value !== "uvc_radiometric") {
+    $("detectState").textContent = "Auto-detect is for UVC cameras; use Discover cameras for Qianli.";
+    return;
+  }
   $("detectState").textContent = "probing…";
   try {
     const d = await (await fetch("/api/camera/detect")).json();
