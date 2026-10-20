@@ -63,6 +63,20 @@ generated on first start). The first visitor creates the admin account.
 `serve` flags: `--driver`, `--host`, `--control-port`, `--media-port`, `--bind`,
 `--profile`, `--demo`, `--data-dir`.
 
+## Desktop (Tauri 2)
+
+The desktop shell uses the same runtime and the same web UI:
+
+```bash
+cargo run -p thermolink-desktop
+```
+
+It binds `127.0.0.1:0`, starts the in-process server, and loads the UI in a
+Tauri window. `thermolink serve` remains the headless mode. See
+[desktop/README.md](desktop/README.md) for Linux build dependencies and current
+limitations: localhost only, no desktop updater yet, and macOS/Windows
+packaging is not validated.
+
 ## Drivers
 
 | id | transport | thermal | visible | notes |

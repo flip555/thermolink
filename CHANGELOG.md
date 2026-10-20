@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — desktop shell
+
+- Phase 4A: shared `src/runtime.rs` for `thermolink serve` and the desktop
+  shell. `RunningServer` exposes the bound address, graceful shutdown and a
+  join handle; the camera supervisor and TLS/HTTPS setup moved out of
+  `main.rs`.
+- Phase 4B: Tauri 2 desktop crate at `desktop/src-tauri`. It starts the same
+  runtime on `127.0.0.1:0`, opens the UI in a webview at the bound address, and
+  shuts the server down on exit.
+- CI: added a Linux `desktop` job that installs WebKitGTK/GTK dependencies and
+  runs `cargo check`/`clippy` for `thermolink-desktop`.
+- Desktop packaging and the Windows/macOS bundle matrix are not wired yet.
+  macOS/Windows are unvalidated; Linux is the reference platform.
+
 ## Unreleased — 0.5.0 (M1)
 
 - New unified `src/camera/uvc_radiometric/` family: one driver, data-only
