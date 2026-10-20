@@ -17,6 +17,9 @@
 
 ## Unreleased — desktop shell
 
+- Camera UI: replace the unsupported Qianli `prompt()` with a real camera-IP
+  field, so macOS WKWebView can switch back to Qianli; convert the history
+  chart and peak labels to the selected °C/°F unit.
 - Visible path: probe WebCodecs with the SPS-derived configuration after
   SPS/PPS, buffer the first keyframe, add `?video=webcodecs|mjpeg|auto`
   (keeping `?mjpeg=1`), and expose `/api/video/capabilities` with the cached

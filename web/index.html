@@ -174,7 +174,7 @@
       <div class="charthead"><span data-i18n="chart.history">TEMPERATURE HISTORY</span>
         <span style="display:flex;gap:4px;align-items:center">
           <button class="x" data-win="5">5m</button><button class="x" data-win="60">1h</button><button class="x" data-win="0" data-i18n="chart.all">all</button><button class="x" id="chartClear" data-i18n="chart.clear">clear</button>
-          <span id="chartRange">1h</span></span></div>
+          <span id="chartUnit">°C</span><span id="chartRange">1h</span></span></div>
       <canvas id="chart"></canvas>
     </section>
   </div>
@@ -321,6 +321,7 @@
       </div>
       <h2>Driver</h2>
       <div class="row"><select id="driverSel" style="flex:1"></select><button id="driverApply">Use driver</button></div>
+      <label class="f" id="driverHostWrap" style="display:none"><span>Camera IP</span> <input id="driverHost" placeholder="172.20.1.85"></label>
       <div class="hint" id="driverState"></div>
       <div id="uvcProfileBlock" style="display:none">
         <h2 data-i18n="label.profile">Profile</h2>
@@ -757,6 +758,9 @@ async function loadDrivers() {
   try {
     const d = await (await fetch("/api/drivers")).json();
     state.profiles = d.profiles || [];
+    state.driverHost = d.host || "";
+    $("driverHost").value = state.driverHost;
+    $("driverHostWrap").style.display = d.current === "qianli" ? "" : "none";
     $("driverSel").innerHTML = (d.drivers || []).map(x =>
       `<option value="${x.id}" ${x.id===d.current?"selected":""}>${x.id} — ${x.model||""}</option>`).join("");
     const profiles = d.profiles || [];
@@ -781,7 +785,10 @@ function updateProfileMeta() {
 }
 
 $("driverSel").onchange = () => {
-  const isUvc = $("driverSel").value === "uvc_radiometric";
+  const driver = $("driverSel").value;
+  const isUvc = driver === "uvc_radiometric";
+  $("driverHostWrap").style.display = driver === "qianli" ? "" : "none";
+  if (driver === "qianli" && !$("driverHost").value) $("driverHost").value = state.driverHost || "";
   $("uvcProfileBlock").style.display = isUvc ? "" : "none";
   if (isUvc) updateProfileMeta();
 };
@@ -796,9 +803,9 @@ $("driverApply").onclick = async () => {
   const driver = $("driverSel").value;
   const body = { driver };
   if (driver === "qianli") {
-    const host = prompt("Qianli camera IP address", "172.20.1.85");
-    if (!host) return;
-    body.host = host.trim();
+    const host = $("driverHost").value.trim();
+    if (!host) { $("driverState").textContent = "enter the Qianli camera IP"; return; }
+    body.host = host;
   }
   if (driver === "uvc_radiometric" && $("profileSel").value) {
     body.profile = $("profileSel").value;
@@ -926,7 +933,7 @@ async function setDisplay(patch) {
 const numOrNull = (id) => $(id).value.trim() === "" ? null : (Number.isFinite(Number($(id).value)) ? Number($(id).value) : null);
 $("apply").onclick = () => setDisplay({ clip_lo:numOrNull("clipLo"), clip_hi:numOrNull("clipHi"), span_lo:numOrNull("spanLo"), span_hi:numOrNull("spanHi") });
 $("reset").onclick = () => { for (const id of ["clipLo","clipHi","spanLo","spanHi"]) $(id).value=""; setDisplay({clip_lo:null,clip_hi:null,span_lo:null,span_hi:null}); };
-$("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; save("unit", state.unit); $("unit").textContent = "°"+state.unit; poll(); };
+$("unit").onclick = () => { state.unit = state.unit==="C"?"F":"C"; save("unit", state.unit); $("unit").textContent = "°"+state.unit; drawRegions(); drawChart(); poll(); };
 function renderIsoBands(bands) {
   const el = $("isoBands");
   el.innerHTML = "";
@@ -1106,7 +1113,7 @@ function drawRegions() {
     svg.appendChild(t);
   }
   for (const p of state.peaks) {
-    const txt = Math.round(p.c) + "°";
+    const txt = fmt(p.c);
     const bg = document.createElementNS("http://www.w3.org/2000/svg","rect");
     bg.setAttribute("x", p.x + 1.0); bg.setAttribute("y", p.y - 3.4);
     bg.setAttribute("width", String(1.2 + txt.length * 1.35)); bg.setAttribute("height", "3.4");
@@ -1445,9 +1452,11 @@ function drawChart() {
   const nowT = Math.floor(Date.now()/1000);
   const s = state.chartWin ? state.history.filter(x => x.t >= nowT - state.chartWin*60) : state.history;
   $("chartRange").textContent = state.chartWin ? (state.chartWin >= 60 ? `${Math.round(state.chartWin/60)}h` : `${state.chartWin}m`) : "all";
+  $("chartUnit").textContent = "°" + state.unit;
   if (s.length < 2) { g.fillStyle="#5c6673"; g.font="11px ui-monospace,monospace"; g.fillText("collecting…",8,h/2); return; }
+  const cv = (c) => state.unit === "F" ? c * 9 / 5 + 32 : c;
   let lo=Infinity, hi=-Infinity;
-  for (const x of s) { lo=Math.min(lo,x.min_c,x.mean_c,x.max_c); hi=Math.max(hi,x.min_c,x.mean_c,x.max_c); }
+  for (const x of s) { lo=Math.min(lo,cv(x.min_c),cv(x.mean_c),cv(x.max_c)); hi=Math.max(hi,cv(x.min_c),cv(x.mean_c),cv(x.max_c)); }
   if (hi-lo < 1) { hi += .5; lo -= .5; }
   const left=34, pad=2;
   const px = (i) => left + (i/(s.length-1))*(w-left-2);
@@ -1460,7 +1469,7 @@ function drawChart() {
   }
   const line = (key, colour) => {
     g.strokeStyle=colour; g.lineWidth=1.4; g.beginPath();
-    s.forEach((x,i)=> i?g.lineTo(px(i),py(x[key])):g.moveTo(px(i),py(x[key])));
+    s.forEach((x,i)=> i?g.lineTo(px(i),py(cv(x[key]))):g.moveTo(px(i),py(cv(x[key]))));
     g.stroke();
   };
   line("max_c", "#ff9f1a"); line("mean_c", "#9aa4b2"); line("min_c", "#7fd1ff");

@@ -577,6 +577,18 @@ impl AppState {
 /// directory is renamed over the destination, so a crash or a full disk
 /// leaves either the old file or the new one, never a truncated file.
 async fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid data file name",
+        ));
+    }
     tokio::fs::create_dir_all(dir).await?;
     let tmp = dir.join(format!(
         ".{name}.{}.tmp",
@@ -1349,6 +1361,7 @@ async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "profiles": profiles,
         "current": runtime.driver.id(),
         "current_profile": runtime.spec.profile.map(|p| p.id),
+        "host": st.camera_host,
     }))
 }
 
@@ -2792,6 +2805,9 @@ async fn reanalyze_json(
     State(st): State<Arc<AppState>>,
     Query(q): Query<ReanalyzeQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !safe_name(&q.name) {
+        return Err((StatusCode::BAD_REQUEST, "bad name".into()));
+    }
     let img = load_snapshot(&st, &q.name)?;
     let base = st.display.read().await.clone();
     let display = reanalyze_display(&base, &q)?;
@@ -2878,10 +2894,7 @@ async fn delete_snapshot(
     State(st): State<Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Json<serde_json::Value> {
-    if name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if safe_name(&name) {
         let dir = st.snapshots_dir();
         for ext in ["jpg", "raw", "json"] {
             let _ = std::fs::remove_file(dir.join(format!("{name}.{ext}")));
@@ -2894,19 +2907,17 @@ async fn snapshot_file(
     State(st): State<Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    if name.contains("..")
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
+    let (base, suffix) = if let Some(base) = name.strip_suffix(".vis") {
+        (base, ".vis")
+    } else if let Some(base) = name.strip_suffix(".jpg") {
+        (base, ".jpg")
+    } else {
+        return (StatusCode::BAD_REQUEST, "bad name").into_response();
+    };
+    if !safe_name(base) {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
-    let file = if name.ends_with(".vis") {
-        name.clone()
-    } else {
-        format!("{name}.jpg")
-    };
-    let path = st.snapshots_dir().join(file);
+    let path = st.snapshots_dir().join(format!("{base}{suffix}"));
     match std::fs::read(path) {
         Ok(bytes) => jpeg_response(bytes),
         Err(_) => (StatusCode::NOT_FOUND, "no such snapshot").into_response(),
@@ -3061,10 +3072,7 @@ async fn capture_file(
         Some(base) => (base.to_string(), true),
         None => (name.clone(), false),
     };
-    if !base
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !safe_name(&base) {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
     if want_zip {
@@ -3733,10 +3741,12 @@ mod tests {
 
     #[test]
     fn password_hash_round_trips() {
-        let hash = hash_password("correct horse battery").expect("hash");
-        assert!(verify_hash("correct horse battery", &hash));
-        assert!(!verify_hash("wrong password", &hash));
-        assert!(!verify_hash("anything", "not-a-hash"));
+        let password = format!("test-password-{}", std::process::id());
+        let wrong = format!("{password}-wrong");
+        let hash = hash_password(&password).expect("hash");
+        assert!(verify_hash(&password, &hash));
+        assert!(!verify_hash(&wrong, &hash));
+        assert!(!verify_hash(&password, "not-a-hash"));
     }
 
     #[test]
