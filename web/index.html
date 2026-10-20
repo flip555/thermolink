@@ -322,6 +322,18 @@
       <h2>Driver</h2>
       <div class="row"><select id="driverSel" style="flex:1"></select><button id="driverApply">Use driver</button></div>
       <div class="hint" id="driverState"></div>
+      <div id="uvcProfileBlock" style="display:none">
+        <h2 data-i18n="label.profile">Profile</h2>
+        <div class="row"><select id="profileSel" style="flex:1"></select><button id="detectBtn" data-i18n="btn.detect">Auto-detect</button></div>
+        <div class="hint" id="detectState"></div>
+        <div class="kv" style="margin-top:8px">
+          <span data-i18n="label.profile">Profile</span><span id="profName">–</span>
+          <span data-i18n="label.usbId">USB ID</span><span id="profUsb">–</span>
+          <span data-i18n="label.confidence">Confidence</span><span id="profConf">–</span>
+          <span data-i18n="label.tested">Validated</span><span id="profTested">–</span>
+        </div>
+        <div class="hint" id="radiometricWarn" style="display:none" data-i18n="hint.uncalibrated">Uncalibrated — temperature measurement is disabled.</div>
+      </div>
       <h2 class="admin-only" data-i18n="panel.relay">Relay</h2>
       <div class="admin-only">
         <div class="kv">
@@ -659,6 +671,14 @@ function applyCapabilities(caps) {
   set("discoveryBlock", !!caps.discover);
   set("netSettingsBlock", !!caps.network_settings);
   set("camReboot", !!caps.reboot);
+  const radio = !!caps.radiometric;
+  const measureTab = document.querySelector('#tabs button[data-tab="measure"]');
+  if (measureTab) measureTab.style.display = radio ? "" : "none";
+  if (!radio) {
+    const active = document.querySelector('#tabs button.active');
+    if (active && active.dataset.tab === "measure") setTab("display", false);
+  }
+  set("radiometricWarn", !radio);
 }
 
 function syncPaletteVisibility(palette) {
@@ -701,19 +721,76 @@ function setMode(mode, persist = true) {
 }
 for (const b of $("modes").children) b.onclick = () => setMode(b.dataset.mode);
 
+function setProfileMeta(profile, device, caps) {
+  if (!profile) { $("uvcProfileBlock").style.display = "none"; return; }
+  $("uvcProfileBlock").style.display = "";
+  $("profName").textContent = profile.display_name || profile.id;
+  $("profConf").textContent = profile.confidence || "unknown";
+  $("profTested").textContent = profile.tested ? "yes" : "no (untested)";
+  if (device) {
+    const vid = Number(device.vid || 0).toString(16).padStart(4, "0");
+    const pid = Number(device.pid || 0).toString(16).padStart(4, "0");
+    $("profUsb").textContent = device.product ? `${vid}:${pid} · ${device.product}` : `${vid}:${pid}`;
+  } else {
+    $("profUsb").textContent = "–";
+  }
+  const radio = !caps || caps.radiometric !== false;
+  $("radiometricWarn").style.display = radio ? "none" : "";
+}
+
 async function loadDrivers() {
   try {
     const d = await (await fetch("/api/drivers")).json();
     $("driverSel").innerHTML = (d.drivers || []).map(x =>
       `<option value="${x.id}" ${x.id===d.current?"selected":""}>${x.id} — ${x.model||""}</option>`).join("");
+    const profiles = d.profiles || [];
+    $("profileSel").innerHTML = profiles.map(x =>
+      `<option value="${x.id}" ${x.id===(d.current_profile||"")?"selected":""}>${x.display_name||x.id}${x.tested?"":" (untested)"}</option>`).join("");
+    if (d.current === "uvc_radiometric") {
+      const p = profiles.find(x => x.id === (d.current_profile||""));
+      setProfileMeta(p || { id: d.current_profile, display_name: d.current_profile, confidence: "unknown", tested: false }, null, p ? { radiometric: p.radiometric } : null);
+    } else {
+      $("uvcProfileBlock").style.display = "none";
+    }
   } catch(e) {}
 }
+
 $("driverApply").onclick = async () => {
-  const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ driver: $("driverSel").value }) });
+  const body = { driver: $("driverSel").value };
+  if ($("driverSel").value === "uvc_radiometric" && $("profileSel").value) {
+    body.profile = $("profileSel").value;
+  }
+  const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
   if (r.ok) {
     $("driverState").textContent = "applied";
+    loadDrivers();
   } else {
     $("driverState").textContent = "error: " + await r.text();
+  }
+};
+
+$("detectBtn").onclick = async () => {
+  $("detectState").textContent = "probing…";
+  try {
+    const d = await (await fetch("/api/camera/detect")).json();
+    const cands = d.candidates || [];
+    if (!cands.length) {
+      $("detectState").textContent = (d.notes || []).join("; ") || "no candidates";
+      return;
+    }
+    const note = d.ambiguous ? "Multiple profiles match; choose one. " : "";
+    $("detectState").innerHTML = note + cands.map((c, i) =>
+      `<button data-cand="${i}">${c.display_name}${c.tested ? "" : " (untested)"}</button>`).join(" ");
+    $("detectState").querySelectorAll("[data-cand]").forEach(b => b.onclick = async () => {
+      const c = cands[Number(b.dataset.cand)];
+      $("profileSel").value = c.profile_id;
+      const r = await fetch("/api/camera/select", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ driver: "uvc_radiometric", profile: c.profile_id, device: c.device }) });
+      $("detectState").textContent = r.ok ? "applied " + c.profile_id : "error: " + await r.text();
+      if (r.ok) loadDrivers();
+    });
+  } catch(e) {
+    $("detectState").textContent = "detect failed: " + e;
   }
 };
 
@@ -1486,6 +1563,8 @@ async function poll() {
       $("res").textContent=t?`${t.width}×${t.height} · ${t.bit_depth}-bit`:"none";
       if (t && (state.w !== t.width || state.h !== t.height)) { state.w=t.width; state.h=t.height; fitViewer(); }
       if (d.spec.capabilities) applyCapabilities(d.spec.capabilities);
+      if (d.spec.profile) setProfileMeta(d.spec.profile, d.spec.device, d.spec.capabilities);
+      else $("uvcProfileBlock").style.display = "none";
     }
     $("seq").textContent=d.seq??"–";
     $("link").innerHTML=connected?'<span class="ok">connected</span>':'<span class="err">offline</span>';

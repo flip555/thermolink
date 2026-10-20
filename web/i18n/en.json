@@ -178,5 +178,11 @@
   "tab.capture": "Capture",
   "tab.display": "Display",
   "tab.measure": "Measure",
-  "title.wipebar": "drag to move the divider"
+  "title.wipebar": "drag to move the divider",
+  "btn.detect": "Auto-detect",
+  "label.profile": "Profile",
+  "label.usbId": "USB ID",
+  "label.confidence": "Confidence",
+  "label.tested": "Validated",
+  "hint.uncalibrated": "Uncalibrated — temperature measurement is disabled."
 }

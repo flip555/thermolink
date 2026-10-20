@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — 0.5.0 (M1)
+
+- New unified `src/camera/uvc_radiometric/` family: one driver, data-only
+  profiles, and a shared frame-layout/radiometry contract.
+- M1 profiles: `topdon_tc001`, `infiray_p2pro` (256×192, split YUYV, 1/64 K)
+  and `uvc_generic` (best-effort raw stream, uncalibrated).
+- Detection: explicit `camera.json` profile → VID/PID + product string →
+  ambiguity → generic fallback. `0bda:5830` is reported as ambiguous, never
+  silently assigned to the TC001 or P2 Pro.
+- New `radiometric` capability separates “thermal stream exists” from
+  “temperature is calibrated”. `uvc_generic` sets it false and the UI hides
+  measurement.
+- API: `/api/drivers` lists profiles; `/api/camera/detect` returns candidates;
+  `/api/camera/select` accepts `profile` and `device`; `/api/spec` includes
+  profile/device metadata.
+- Architecture: server discovery no longer imports the Qianli protocol; the
+  driver trait provides discovery/detection. Added an architecture test that
+  fails if `src/server/` imports a concrete driver.
+- Tests: offline split/packed layout fixtures, ambiguity/fallback detection,
+  legacy `camera.json` compatibility.
+- All new UVC profiles are `tested: false`. No hardware support is claimed.
+
 ## 0.4.0 — 2026-10-19
 
 - P3/P1 USB transport using `nusb`: interface claim, vendor control init,

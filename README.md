@@ -11,7 +11,9 @@ resolution, packet layout, or network dialect. It asks a driver for a
 **Status:** the single-camera relay is feature-complete: live thermal and visible
 feeds, measurement, alarms, snapshots, pre-record, roles, HTTPS, i18n, and
 runtime driver hot-swap. A P3/P1 USB driver uses `nusb` for transport, with the
-protocol and calibration ported; hardware validation is still pending.
+protocol and calibration ported; hardware validation is still pending. A unified
+UVC radiometric family (M1) adds `topdon_tc001`, `infiray_p2pro` and an
+uncalibrated `uvc_generic` fallback; these are **not hardware-validated yet**.
 
 ## A look at it
 
@@ -59,7 +61,7 @@ Open `http://<host>:8099` (HTTP) or `https://<host>:8443` (self-signed TLS,
 generated on first start). The first visitor creates the admin account.
 
 `serve` flags: `--driver`, `--host`, `--control-port`, `--media-port`, `--bind`,
-`--demo`, `--data-dir`.
+`--profile`, `--demo`, `--data-dir`.
 
 ## Drivers
 
@@ -67,11 +69,24 @@ generated on first start). The first visitor creates the admin account.
 |----|-----------|---------|---------|-------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full handshake, settings, reboot, discovery |
 | `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser + calibration; hardware validation pending |
+| `uvc_radiometric` | USB/UVC (Linux) | 256×192 | — | unified profiles; M1: TC001/P2 Pro + generic fallback; **untested** |
 | `mock` | in-process | 160×120 | — | simulator for development and tests |
 
 The GUI **Camera → Driver** selector persists `camera.json` and hot-swaps the
 driver without restarting the relay. Capabilities are advertised in
 `/api/spec`; the UI hides modes and controls that do not apply.
+
+For the UVC family, choose a profile or let auto-detect fill it:
+
+```bash
+./target/release/thermolink probe --driver uvc_radiometric --profile topdon_tc001
+./target/release/thermolink serve --driver uvc_radiometric --profile topdon_tc001
+```
+
+`0bda:5830` is shared by several models; auto-detect reports the ambiguity and
+never silently claims a specific camera. Use `--profile` or the UI selector to
+force one. Unknown devices fall back to `uvc_generic`, which streams raw data
+with temperature measurement disabled.
 
 ## Data directory
 

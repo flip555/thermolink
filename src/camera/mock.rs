@@ -36,6 +36,7 @@ impl MockDriver {
                 video: None,
                 capabilities: super::Capabilities {
                     thermal: true,
+                    radiometric: true,
                     ..Default::default()
                 },
                 thermal: Some(ThermalStream {
@@ -44,6 +45,8 @@ impl MockDriver {
                     bit_depth: 16,
                     calibration: Calibration::default(),
                 }),
+                profile: None,
+                device: None,
             },
         }
     }
@@ -131,5 +134,6 @@ fn synth(n: u64) -> ThermalImage {
         height: HEIGHT,
         raw: Bytes::from(raw),
         calibration: Calibration::default(),
+        lut: None,
     }
 }

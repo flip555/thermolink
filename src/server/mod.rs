@@ -724,6 +724,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/spec", get(spec))
         .route("/api/drivers", get(drivers))
         .route("/api/camera/select", post(select_camera))
+        .route("/api/camera/detect", get(camera_detect))
         .route("/api/health", get(health))
         .route("/api/thermal.json", get(thermal_json))
         .route("/api/thermal.jpg", get(thermal_jpg))
@@ -850,6 +851,8 @@ fn guard_for(method: &Method, path: &str, query: Option<&str>) -> Guard {
         || path == "/api/account"
         || path == "/api/update"
         || path == "/api/restart"
+        || path == "/api/camera/select"
+        || path == "/api/camera/detect"
     {
         return Guard::Admin;
     }
@@ -1315,7 +1318,29 @@ async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
             list.push(json!({ "id": id, "model": s.model, "capabilities": s.capabilities }));
         }
     }
-    Json(json!({ "drivers": list, "current": st.camera.load().driver.id() }))
+    let profiles: Vec<_> = crate::camera::registry::profiles()
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.info.id,
+                "display_name": p.info.display_name,
+                "vendor": p.info.vendor,
+                "model": p.info.model,
+                "tested": p.info.tested,
+                "confidence": p.info.confidence,
+                "sources": p.info.sources,
+                "notes": p.info.notes,
+                "radiometric": p.radiometric && p.radiometry.is_radiometric(),
+            })
+        })
+        .collect();
+    let runtime = st.camera.load_full();
+    Json(json!({
+        "drivers": list,
+        "profiles": profiles,
+        "current": runtime.driver.id(),
+        "current_profile": runtime.spec.profile.map(|p| p.id),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -1327,6 +1352,12 @@ struct SelectCamera {
     control_port: Option<u16>,
     #[serde(default)]
     media_port: Option<u16>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    auto_detect: Option<bool>,
+    #[serde(default)]
+    device: Option<crate::config::DeviceSelector>,
 }
 
 async fn select_camera(
@@ -1336,13 +1367,21 @@ async fn select_camera(
     if !crate::camera::registry::KNOWN.contains(&req.driver.as_str()) {
         return Err((StatusCode::BAD_REQUEST, "unknown driver".into()));
     }
-    let cfg_obj = crate::config::CameraConfig {
+    let mut cfg_obj = crate::config::CameraConfig {
         driver: req.driver,
         host: req.host.unwrap_or_else(|| st.camera_host.clone()),
         control_port: req.control_port.unwrap_or(3001),
         media_port: req.media_port.unwrap_or(3000),
+        profile: req.profile.filter(|p| !p.is_empty()),
+        auto_detect: req.auto_detect.unwrap_or(true),
+        device: req.device.unwrap_or_default(),
         ..Default::default()
     };
+    if crate::camera::registry::is_uvc(&cfg_obj.driver) {
+        crate::camera::registry::resolve(&mut cfg_obj)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    }
     write_atomic(
         &st.data_dir,
         "camera.json",
@@ -1358,7 +1397,24 @@ async fn select_camera(
     st.camera.store(Arc::new(CameraRuntime { driver, spec }));
     let next = *st.camera_gen.borrow() + 1;
     let _ = st.camera_gen.send(next);
-    Ok(Json(json!({ "ok": true, "restarting": false })))
+    Ok(Json(json!({
+        "ok": true,
+        "restarting": false,
+        "profile": cfg_obj.profile
+    })))
+}
+
+async fn camera_detect(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    st.camera
+        .load()
+        .driver
+        .clone()
+        .detect()
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
 }
 
 async fn spec(State(st): State<Arc<AppState>>) -> Json<CameraSpec> {
@@ -2092,6 +2148,7 @@ fn reference_image(
         height,
         raw: Bytes::from(raw),
         calibration: reference.calibration.unwrap_or(fallback),
+        lut: None,
     }
 }
 
@@ -2376,56 +2433,15 @@ async fn camera_reboot(
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
 }
 
-async fn probe_camera(ip: &str) -> bool {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let Ok(Ok(mut socket)) = tokio::time::timeout(
-        Duration::from_millis(300),
-        tokio::net::TcpStream::connect((ip, 3001)),
-    )
-    .await
-    else {
-        return false;
-    };
-    let packet = crate::camera::qianli::protocol::register(0x6c, 0);
-    if socket.write_all(&packet).await.is_err() {
-        return false;
-    }
-    let mut buf = vec![0u8; 1024];
-    let n = match tokio::time::timeout(Duration::from_millis(700), socket.read(&mut buf)).await {
-        Ok(Ok(n)) => n,
-        _ => 0,
-    };
-    n >= 70 && buf[..n].windows(4).any(|w| w == [0x78, 0xb6, 0x3a, 0x12])
-}
-
 async fn discover(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let parts: Vec<&str> = st.camera_host.split('.').collect();
-    if parts.len() != 4 {
-        return Json(json!({ "hosts": [], "error": "camera host is not an IPv4 address" }));
+    match st.camera.load().driver.clone().discover().await {
+        Ok(value) => Json(value),
+        Err(e) => Json(json!({
+            "hosts": [],
+            "devices": [],
+            "error": e.to_string()
+        })),
     }
-    let base = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
-    let sem = Arc::new(tokio::sync::Semaphore::new(64));
-    let mut tasks = Vec::new();
-    for last in 1..=254u8 {
-        let ip = format!("{base}.{last}");
-        let sem = sem.clone();
-        tasks.push(tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await.ok()?;
-            if probe_camera(&ip).await {
-                Some(ip)
-            } else {
-                None
-            }
-        }));
-    }
-    let mut hosts = Vec::new();
-    for task in tasks {
-        if let Ok(Some(ip)) = task.await {
-            hosts.push(ip);
-        }
-    }
-    hosts.sort_by_key(|ip| ip.rsplit('.').next().and_then(|n| n.parse::<u16>().ok()));
-    Json(json!({ "hosts": hosts, "scanned": format!("{base}.0/24") }))
 }
 
 async fn camera_settings(
@@ -2687,6 +2703,7 @@ fn load_snapshot(st: &AppState, name: &str) -> Result<ThermalImage, (StatusCode,
         height,
         raw: Bytes::from(raw),
         calibration: Calibration { scale, offset },
+        lut: None,
     })
 }
 

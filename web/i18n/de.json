@@ -178,5 +178,11 @@
   "tab.capture": "Aufnahme",
   "tab.display": "Anzeige",
   "tab.measure": "Messen",
-  "title.wipebar": "ziehen, um die Trennlinie zu verschieben"
+  "title.wipebar": "ziehen, um die Trennlinie zu verschieben",
+  "btn.detect": "Auto-Erkennung",
+  "label.profile": "Profil",
+  "label.usbId": "USB-ID",
+  "label.confidence": "Konfidenz",
+  "label.tested": "Validiert",
+  "hint.uncalibrated": "Unkalibriert — Temperaturmessung ist deaktiviert."
 }

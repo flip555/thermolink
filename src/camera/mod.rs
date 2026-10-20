@@ -4,6 +4,7 @@
 //! framed, how pixels are laid out, and what the sensor's raw values mean.
 //! Everything above this module works only with the types defined here.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -14,6 +15,7 @@ pub mod mock;
 pub mod p3;
 pub mod qianli;
 pub mod registry;
+pub mod uvc_radiometric;
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -105,11 +107,53 @@ pub struct ThermalStream {
 pub struct Capabilities {
     pub thermal: bool,
     pub visible: bool,
+    /// True only when the temperature values are calibrated and defensible.
+    /// A raw thermal stream with unknown calibration sets this to false.
+    #[serde(default)]
+    pub radiometric: bool,
     pub discover: bool,
     pub network_settings: bool,
     pub reboot: bool,
     #[serde(default)]
     pub controls: Vec<String>,
+}
+
+/// How much external evidence backs a hardware profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Confidence {
+    /// A real device was tested by this project.
+    Verified,
+    /// Public protocol notes or community reports exist; not tested here.
+    Documented,
+    /// Inferred from a partial capture or a related model.
+    Inferred,
+    /// No reliable information.
+    Unknown,
+}
+
+/// Static profile identity shown by the API and UI.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ProfileInfo {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub vendor: &'static str,
+    pub model: &'static str,
+    /// Real-device validation by this project.
+    pub tested: bool,
+    pub confidence: Confidence,
+    pub sources: &'static [&'static str],
+    pub notes: &'static str,
+}
+
+/// The USB device a session was opened against.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub vid: u16,
+    pub pid: u16,
+    pub product: Option<String>,
+    pub serial: Option<String>,
+    pub path: Option<String>,
 }
 
 /// What a driver can produce. The web UI builds itself from this.
@@ -119,6 +163,10 @@ pub struct CameraSpec {
     pub model: &'static str,
     pub video: Option<VideoStream>,
     pub thermal: Option<ThermalStream>,
+    #[serde(default)]
+    pub profile: Option<ProfileInfo>,
+    #[serde(default)]
+    pub device: Option<DeviceInfo>,
     #[serde(default)]
     pub capabilities: Capabilities,
 }
@@ -131,6 +179,9 @@ pub struct ThermalImage {
     /// `width * height` little-endian `u16` samples.
     pub raw: Bytes,
     pub calibration: Calibration,
+    /// Optional 65_536-entry temperature table for non-linear sensors.
+    /// When present it takes precedence over `calibration` for temperature.
+    pub lut: Option<Arc<[f32]>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -165,7 +216,19 @@ impl ThermalImage {
     }
 
     pub fn celsius_at(&self, x: u32, y: u32) -> Option<f32> {
-        self.raw_value(x, y).map(|v| self.calibration.celsius(v))
+        self.raw_value(x, y).map(|v| self.celsius(v))
+    }
+
+    /// Convert one raw sample to Celsius, using the table when the profile
+    /// supplies one and the linear calibration otherwise.
+    pub fn celsius(&self, raw: u16) -> f32 {
+        match &self.lut {
+            Some(table) => table
+                .get(raw as usize)
+                .copied()
+                .unwrap_or_else(|| self.calibration.celsius(raw)),
+            None => self.calibration.celsius(raw),
+        }
     }
 
     pub fn values(&self) -> impl Iterator<Item = u16> + '_ {
@@ -177,7 +240,7 @@ impl ThermalImage {
     pub fn stats(&self) -> ThermalStats {
         let mut min = u16::MAX;
         let mut max = 0u16;
-        let mut sum = 0u64;
+        let mut sum_c = 0.0f64;
         let (mut hot, mut cold) = (0usize, 0usize);
         for (i, v) in self.values().enumerate() {
             if v < min {
@@ -188,14 +251,14 @@ impl ThermalImage {
                 max = v;
                 hot = i;
             }
-            sum += v as u64;
+            sum_c += self.celsius(v) as f64;
         }
         let n = self.pixel_count().max(1) as u64;
         let w = self.width.max(1);
         ThermalStats {
-            min_c: self.calibration.celsius(min),
-            max_c: self.calibration.celsius(max),
-            mean_c: (sum as f32 / n as f32) * self.calibration.scale + self.calibration.offset,
+            min_c: self.celsius(min),
+            max_c: self.celsius(max),
+            mean_c: (sum_c / n as f64) as f32,
             hot: (hot as u32 % w, hot as u32 / w),
             cold: (cold as u32 % w, cold as u32 / w),
             width: self.width,
@@ -229,7 +292,7 @@ impl ThermalImage {
                 out.push(Peak {
                     x,
                     y,
-                    celsius: self.calibration.celsius(v),
+                    celsius: self.celsius(v),
                 });
             }
             if out.len() >= n {
@@ -277,6 +340,7 @@ pub fn thermal_test_image(values: &[u16], width: u32, height: u32) -> ThermalIma
         height,
         raw: Bytes::from(raw),
         calibration: Calibration::default(),
+        lut: None,
     }
 }
 
@@ -307,6 +371,22 @@ pub trait CameraDriver: Send + Sync {
     async fn write_settings(&self, _changes: serde_json::Value) -> Result<serde_json::Value> {
         anyhow::bail!("network settings are not supported by this driver")
     }
+
+    /// Discover cameras on the driver's own network/transport.
+    /// The server calls this instead of knowing any vendor protocol.
+    async fn discover(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({ "hosts": [], "devices": [] }))
+    }
+
+    /// Probe attached USB devices for a matching radiometric profile.
+    async fn detect(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "candidates": [],
+            "selected": null,
+            "fallback": false,
+            "ambiguous": false
+        }))
+    }
 }
 
 /// A live connection. `next_frame` must be cancellation-safe and should fail
@@ -317,6 +397,12 @@ pub trait CameraSession: Send {
 
     /// Next available frame from any stream. Blocks until one arrives.
     async fn next_frame(&mut self) -> Result<CameraFrame>;
+
+    /// Apply one live control. Drivers that do not support controls keep the
+    /// default error, which the API turns into a 400.
+    async fn control(&mut self, id: &str, _value: serde_json::Value) -> Result<serde_json::Value> {
+        anyhow::bail!("control {id:?} is not supported by this camera")
+    }
 
     /// Best-effort orderly teardown.
     async fn close(&mut self);

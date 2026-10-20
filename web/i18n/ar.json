@@ -178,5 +178,11 @@
   "tab.capture": "الالتقاط",
   "tab.display": "العرض",
   "tab.measure": "القياس",
-  "title.wipebar": "اسحب لتحريك الفاصل"
+  "title.wipebar": "اسحب لتحريك الفاصل",
+  "btn.detect": "اكتشاف تلقائي",
+  "label.profile": "الملف",
+  "label.usbId": "معرف USB",
+  "label.confidence": "الثقة",
+  "label.tested": "تم التحقق",
+  "hint.uncalibrated": "غير معاير — قياس درجة الحرارة معطل."
 }

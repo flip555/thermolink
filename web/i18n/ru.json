@@ -178,5 +178,11 @@
   "tab.capture": "Захват",
   "tab.display": "Экран",
   "tab.measure": "Измерение",
-  "title.wipebar": "перетащите, чтобы сдвинуть разделитель"
+  "title.wipebar": "перетащите, чтобы сдвинуть разделитель",
+  "btn.detect": "Автоопределение",
+  "label.profile": "Профиль",
+  "label.usbId": "USB ID",
+  "label.confidence": "Достоверность",
+  "label.tested": "Проверено",
+  "hint.uncalibrated": "Не откалибровано — измерение температуры отключено."
 }

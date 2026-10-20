@@ -13,6 +13,18 @@ pub struct Config {
     pub server: ServerConfig,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeviceSelector {
+    /// USB vendor id, e.g. 0x0bda.
+    pub vid: Option<u16>,
+    /// USB product id, e.g. 0x5830.
+    pub pid: Option<u16>,
+    pub serial: Option<String>,
+    /// Linux video node, e.g. /dev/video2.
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraConfig {
@@ -29,6 +41,12 @@ pub struct CameraConfig {
     pub reconnect_secs: u64,
     /// Driver-specific knobs (width/height overrides, calibration, ...).
     pub options: serde_json::Value,
+    /// UVC profile override. `None` or `"auto"` means detect.
+    pub profile: Option<String>,
+    /// Try to detect a UVC profile from the attached device.
+    pub auto_detect: bool,
+    /// Optional explicit USB device selector.
+    pub device: DeviceSelector,
 }
 
 impl Default for CameraConfig {
@@ -40,6 +58,9 @@ impl Default for CameraConfig {
             media_port: 3000,
             reconnect_secs: 8,
             options: serde_json::json!({}),
+            profile: None,
+            auto_detect: true,
+            device: DeviceSelector::default(),
         }
     }
 }
