@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "desktop/src-tauri"]
+resolver = "2"
+
 [package]
 name = "thermolink"
 version = "0.4.0"

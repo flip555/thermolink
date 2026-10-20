@@ -1,4 +1,5 @@
 /target
+desktop/src-tauri/gen/
 *.h264
 *.raw
 *.mjpg
