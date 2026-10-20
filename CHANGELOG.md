@@ -11,9 +11,15 @@
   shuts the server down on exit.
 - CI: added a Linux `desktop` job that installs WebKitGTK/GTK dependencies and
   runs `cargo check`/`clippy` for `thermolink-desktop`.
-- macOS: added `NSLocalNetworkUsageDescription`, a `desktop/sign-macos-dev.sh`
-  script, and desktop file logging. Tauri's debug bundle is linker-signed;
-  re-signing the whole bundle makes macOS apply the Local Network permission.
+- macOS: added `NSLocalNetworkUsageDescription`, `signingIdentity: "-"` so
+  Tauri ad-hoc signs every bundle, and desktop file logging. The linker-signed
+  debug bundle left `Info.plist` unbound and made macOS ignore Local Network
+  permission; proper bundle signing fixed it. `desktop/sign-macos-dev.sh` is a
+  fallback for other builds.
+- Desktop now honors `THERMOLINK_FFMPEG` and checks
+  `Contents/Resources/ffmpeg`, enabling a bundled static ffmpeg. Verified the
+  Qianli thermal and visible streams with a local static build; that test
+  binary is GPL/nonfree and must not be redistributed.
 - Camera UI: Auto-detect is now explicitly UVC-only; Qianli users are pointed at
   Discover cameras.
 - The release workflow now builds unsigned desktop bundles on Linux, macOS and

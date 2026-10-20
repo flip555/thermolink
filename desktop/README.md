@@ -40,16 +40,30 @@ code signing are follow-ups.
 
 ### macOS Local Network permission
 
-Tauri's debug bundle is linker-signed by default, which leaves `Info.plist`
-unbound and can make macOS ignore the Local Network permission toggle. After a
-debug build, re-sign the bundle ad-hoc:
+Tauri is configured with `bundle.macOS.signingIdentity: "-"`, so every build is
+ad-hoc signed automatically and `Info.plist` is bound. That lets macOS apply the
+Local Network permission without a manual `codesign` step.
+
+`desktop/sign-macos-dev.sh` remains as a fallback for a bundle built before that
+setting or by another tool:
 
 ```bash
 ./desktop/sign-macos-dev.sh
 ```
 
 Then allow ThermoLink under **System Settings → Privacy & Security → Local
-Network**. A distributed build should use a Developer ID identity instead.
+Network**. End users do **not** run this script. A distributed build should use
+a Developer ID identity and notarization instead of ad-hoc signing.
+
+### Static ffmpeg
+
+`thermolink` honors `THERMOLINK_FFMPEG`, and the desktop app looks for
+`Contents/Resources/ffmpeg` first. Copy a licensed static ffmpeg binary there
+for a self-contained app.
+
+The `ffmpeg-static` npm test binary used during development is built with
+`--enable-gpl --enable-nonfree`; do not redistribute it. Use an LGPL static
+build (or a properly licensed binary) for a public release.
 
 ## Current scope
 

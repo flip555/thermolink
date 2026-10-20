@@ -26,6 +26,12 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                let bundled = resource_dir.join("ffmpeg");
+                if bundled.is_file() {
+                    std::env::set_var("THERMOLINK_FFMPEG", bundled);
+                }
+            }
             let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
             let server =
                 tauri::async_runtime::block_on(thermolink::runtime::start(RuntimeConfig {

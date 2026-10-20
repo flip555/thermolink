@@ -95,7 +95,9 @@ async fn run_once(
     alive: &Arc<AtomicBool>,
     error: &Arc<Mutex<Option<String>>>,
 ) -> Result<(), String> {
-    let mut child = Command::new("ffmpeg")
+    let ffmpeg =
+        std::env::var_os("THERMOLINK_FFMPEG").unwrap_or_else(|| std::ffi::OsString::from("ffmpeg"));
+    let mut child = Command::new(&ffmpeg)
         .args([
             "-hide_banner",
             "-loglevel",
