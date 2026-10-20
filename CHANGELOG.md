@@ -44,6 +44,9 @@
   `resources/` subdirectory.
 - Camera UI: Auto-detect is now explicitly UVC-only; Qianli users are pointed at
   Discover cameras.
+- Camera UI: selecting `uvc_radiometric` immediately reveals every profile,
+  labels each one with its validation state, and offers a **Report hardware**
+  link for users testing an unvalidated camera.
 - The release workflow now builds unsigned desktop bundles on Linux, macOS and
   Windows and uploads them as workflow artifacts. Attaching those bundles to
   the GitHub release and code signing remain follow-ups; macOS/Windows are

@@ -326,6 +326,7 @@
         <h2 data-i18n="label.profile">Profile</h2>
         <div class="row"><select id="profileSel" style="flex:1"></select><button id="detectBtn" data-i18n="btn.detect">Auto-detect</button></div>
         <div class="hint" id="detectState"></div>
+        <div class="hint" id="profileHint"></div>
         <div class="kv" style="margin-top:8px">
           <span data-i18n="label.profile">Profile</span><span id="profName">–</span>
           <span data-i18n="label.usbId">USB ID</span><span id="profUsb">–</span>
@@ -333,6 +334,7 @@
           <span data-i18n="label.tested">Validated</span><span id="profTested">–</span>
         </div>
         <div class="hint" id="radiometricWarn" style="display:none" data-i18n="hint.uncalibrated">Uncalibrated — temperature measurement is disabled.</div>
+        <div class="row" style="margin-top:8px"><button id="reportHardware">Report hardware / capture</button></div>
       </div>
       <h2 class="admin-only" data-i18n="panel.relay">Relay</h2>
       <div class="admin-only">
@@ -721,19 +723,25 @@ function setMode(mode, persist = true) {
 }
 for (const b of $("modes").children) b.onclick = () => setMode(b.dataset.mode);
 
+function validationLabel(value) {
+  return {
+    hardware_validated: "validated",
+    ported_unvalidated: "ported — unvalidated",
+    needs_hardware: "needs hardware",
+    needs_research: "needs research"
+  }[value] || value || "untested";
+}
+
 function setProfileMeta(profile, device, caps) {
   if (!profile) { $("uvcProfileBlock").style.display = "none"; return; }
   $("uvcProfileBlock").style.display = "";
   $("profName").textContent = profile.display_name || profile.id;
   $("profConf").textContent = profile.confidence || "unknown";
   const validation = profile.validation || (profile.tested ? "hardware_validated" : "ported_unvalidated");
-  const validationLabels = {
-    hardware_validated: "validated",
-    ported_unvalidated: "ported — unvalidated",
-    needs_hardware: "needs hardware",
-    needs_research: "needs research"
-  };
-  $("profTested").textContent = validationLabels[validation] || validation;
+  $("profTested").textContent = validationLabel(validation);
+  $("profileHint").textContent = validation === "hardware_validated"
+    ? "This profile is validated against real hardware."
+    : "Experimental profile — select your camera, click Use driver, then report whether it works with a raw capture.";
   if (device) {
     const vid = Number(device.vid || 0).toString(16).padStart(4, "0");
     const pid = Number(device.pid || 0).toString(16).padStart(4, "0");
@@ -748,19 +756,41 @@ function setProfileMeta(profile, device, caps) {
 async function loadDrivers() {
   try {
     const d = await (await fetch("/api/drivers")).json();
+    state.profiles = d.profiles || [];
     $("driverSel").innerHTML = (d.drivers || []).map(x =>
       `<option value="${x.id}" ${x.id===d.current?"selected":""}>${x.id} — ${x.model||""}</option>`).join("");
     const profiles = d.profiles || [];
     $("profileSel").innerHTML = profiles.map(x =>
-      `<option value="${x.id}" ${x.id===(d.current_profile||"")?"selected":""}>${x.display_name||x.id}${x.tested?"":" (untested)"}</option>`).join("");
+      `<option value="${x.id}" ${x.id===(d.current_profile||"")?"selected":""}>${x.display_name||x.id} — ${validationLabel(x.validation || (x.tested ? "hardware_validated" : "ported_unvalidated"))}</option>`).join("");
+    const selected = profiles.find(x => x.id === (d.current_profile||"")) || profiles[0];
+    if (selected) $("profileSel").value = selected.id;
     if (d.current === "uvc_radiometric") {
-      const p = profiles.find(x => x.id === (d.current_profile||""));
+      const p = selected;
       setProfileMeta(p || { id: d.current_profile, display_name: d.current_profile, confidence: "unknown", tested: false, validation: "needs_research" }, null, p ? { radiometric: p.radiometric } : null);
     } else {
       $("uvcProfileBlock").style.display = "none";
     }
   } catch(e) {}
 }
+
+function updateProfileMeta() {
+  const id = $("profileSel").value;
+  const p = (state.profiles || []).find(x => x.id === id) ||
+    { id, display_name: id, confidence: "unknown", tested: false, validation: "needs_research" };
+  setProfileMeta(p, null, { radiometric: p.radiometric });
+}
+
+$("driverSel").onchange = () => {
+  const isUvc = $("driverSel").value === "uvc_radiometric";
+  $("uvcProfileBlock").style.display = isUvc ? "" : "none";
+  if (isUvc) updateProfileMeta();
+};
+
+$("profileSel").onchange = updateProfileMeta;
+
+$("reportHardware").onclick = () => {
+  window.open("https://github.com/flip555/thermolink/issues/new?template=hardware-report.yml", "_blank", "noopener");
+};
 
 $("driverApply").onclick = async () => {
   const driver = $("driverSel").value;

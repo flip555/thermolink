@@ -128,6 +128,14 @@ with the model is enough:
 Until one of these is available, the profiles stay **ported/unvalidated** and
 must not be described as supported hardware.
 
+### Testing an unvalidated profile
+
+1. In the Camera tab, set the driver to `uvc_radiometric`.
+2. Pick the closest profile; the dropdown shows its validation state.
+3. Click **Use driver**.
+4. If it works or fails, click **Report hardware / capture** and include the
+   VID:PID, profile, and a raw frame or short capture.
+
 `camera.json` for an explicit M1 profile:
 
 ```json
