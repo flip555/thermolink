@@ -10,6 +10,9 @@
 - The Linux UVC transport applies the HT301/T2S raw-mode command through the
   V4L2 zoom control before starting ffmpeg.
 - Added synthetic layout/calibration tests and new fingerprint tests.
+- Profiles now expose a validation state (`ported_unvalidated`, `needs_hardware`,
+  `needs_research`) in `/api/drivers` and the UI; `docs/DRIVERS.md` lists the
+  hardware still needed for each model.
 - All new profiles are `tested: false`; no hardware support is claimed.
 
 ## Unreleased — 0.5.0 (M1)

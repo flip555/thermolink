@@ -1328,6 +1328,7 @@ async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
                 "model": p.info.model,
                 "tested": p.info.tested,
                 "confidence": p.info.confidence,
+                "validation": p.info.validation,
                 "sources": p.info.sources,
                 "notes": p.info.notes,
                 "radiometric": p.radiometric && p.radiometry.is_radiometric(),

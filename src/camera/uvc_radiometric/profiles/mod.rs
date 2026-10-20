@@ -6,7 +6,7 @@
 //! Every formula here is ported from a public reverse-engineering project.
 //! None of these profiles has been validated against hardware by this project.
 
-use crate::camera::{Confidence, ProfileInfo};
+use crate::camera::{Confidence, ProfileInfo, Validation};
 
 use super::types::{
     DeviceTemp, Endian, FrameLayout, RadiometricProfile, RadiometrySpec, RawMode, StreamConfig,
@@ -29,6 +29,7 @@ pub static TOPDON_TC001: RadiometricProfile = RadiometricProfile {
         model: "TC001",
         tested: false,
         confidence: Confidence::Documented,
+        validation: Validation::PortedUnvalidated,
         sources: &[
             "leswright1977/PyThermalCamera tc001v4.2.py",
             "92es/Thermal-Camera-Redux",
@@ -68,6 +69,7 @@ pub static INFIRAY_P2PRO: RadiometricProfile = RadiometricProfile {
         model: "P2 Pro",
         tested: false,
         confidence: Confidence::Documented,
+        validation: Validation::PortedUnvalidated,
         sources: &[
             "LeoDJ/P2Pro-Viewer P2Pro/video.py",
             "LeoDJ/P2Pro-Viewer P2Pro/P2Pro_cmd.py",
@@ -108,6 +110,7 @@ pub static TOPDON_TC002C: RadiometricProfile = RadiometricProfile {
         model: "TC002C DUO",
         tested: false,
         confidence: Confidence::Inferred,
+        validation: Validation::NeedsHardware,
         sources: &["Weaver32/TC002C-DUO-Viewer"],
         notes: "256x192, 256x392 YUYV. The device temperature is in metadata \
                 row 192; the mapping is the author's empirical fit, not vendor \
@@ -147,6 +150,7 @@ pub static HT301: RadiometricProfile = RadiometricProfile {
         model: "HT-301",
         tested: false,
         confidence: Confidence::Documented,
+        validation: Validation::PortedUnvalidated,
         sources: &[
             "stawel/ht301_hacklib",
             "MCMH2000/OpenHD_HT301_Driver",
@@ -190,6 +194,7 @@ pub static XTHERM_T2S: RadiometricProfile = RadiometricProfile {
         model: "T2S+",
         tested: false,
         confidence: Confidence::Inferred,
+        validation: Validation::PortedUnvalidated,
         sources: &[
             "stawel/ht301_hacklib (T2S+ support)",
             "diminDDL/InfiCamPlus (T2S+ v1/v2)",
@@ -232,6 +237,7 @@ pub static HIK_MINI2: RadiometricProfile = RadiometricProfile {
         model: "Mini2",
         tested: false,
         confidence: Confidence::Inferred,
+        validation: Validation::NeedsHardware,
         sources: &["creator72/hikmicro-thermal"],
         notes: "256x192 YUYV; thermal data is the Y channel (8-bit). Public code \
                 uses a per-unit polynomial not shipped here, so this profile is \
@@ -264,6 +270,7 @@ pub static UVC_GENERIC: RadiometricProfile = RadiometricProfile {
         model: "UVC",
         tested: false,
         confidence: Confidence::Unknown,
+        validation: Validation::NeedsResearch,
         sources: &[],
         notes: "Fallback only. The frame layout and calibration are unknown; \
                 temperature measurement is disabled and the UI must say so.",
