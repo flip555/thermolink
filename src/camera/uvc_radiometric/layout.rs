@@ -13,6 +13,8 @@ pub struct ExtractedFrame {
     pub width: u32,
     pub height: u32,
     pub raw: Bytes,
+    /// Raw metadata rows after the thermal block, when the layout has them.
+    pub metadata: Option<Bytes>,
 }
 
 impl FrameLayout {
@@ -25,6 +27,7 @@ impl FrameLayout {
                 ..
             } => Some((width, thermal_rows)),
             FrameLayout::RawU16WithMetadata { width, height, .. } => Some((width, height)),
+            FrameLayout::YuyvY8 { width, height, .. } => Some((width, height)),
             FrameLayout::UnknownRawU16 { width, height } => Some((width, height)),
         }
     }
@@ -47,6 +50,11 @@ impl FrameLayout {
                 metadata_rows,
                 ..
             } => Some((width, height + metadata_rows)),
+            FrameLayout::YuyvY8 {
+                width,
+                frame_height,
+                ..
+            } => Some((width, frame_height)),
             FrameLayout::UnknownRawU16 { width, height } => Some((width, height)),
         }
     }
@@ -86,11 +94,13 @@ impl FrameLayout {
                     width,
                     height,
                     raw: Bytes::from(raw),
+                    metadata: None,
                 })
             }
             FrameLayout::PackedYuyvU16 {
                 width,
                 thermal_rows,
+                metadata_rows,
                 ..
             } => {
                 let row_bytes = width as usize * 2;
@@ -115,24 +125,86 @@ impl FrameLayout {
                         raw.extend_from_slice(&((v0 << 8) | y1).to_le_bytes());
                     }
                 }
+                let meta_start = needed;
+                let meta_len = metadata_rows as usize * row_bytes;
+                let metadata = if metadata_rows > 0 {
+                    ensure!(
+                        frame.len() >= meta_start + meta_len,
+                        "short packed metadata: {} bytes, need {}",
+                        frame.len(),
+                        meta_start + meta_len
+                    );
+                    Some(Bytes::copy_from_slice(
+                        &frame[meta_start..meta_start + meta_len],
+                    ))
+                } else {
+                    None
+                };
                 Ok(ExtractedFrame {
                     width,
                     height: thermal_rows,
                     raw: Bytes::from(raw),
+                    metadata,
                 })
             }
-            FrameLayout::RawU16WithMetadata { width, height, .. } => {
+            FrameLayout::RawU16WithMetadata {
+                width,
+                height,
+                metadata_rows,
+                ..
+            } => {
                 let len = width as usize * height as usize * 2;
+                let meta_len = metadata_rows as usize * width as usize * 2;
                 ensure!(
                     frame.len() >= len,
                     "short raw U16 frame: {} bytes, need {}",
                     frame.len(),
                     len
                 );
+                let metadata = if meta_len > 0 {
+                    ensure!(
+                        frame.len() >= len + meta_len,
+                        "short raw U16 metadata: {} bytes, need {}",
+                        frame.len(),
+                        len + meta_len
+                    );
+                    Some(Bytes::copy_from_slice(&frame[len..len + meta_len]))
+                } else {
+                    None
+                };
                 Ok(ExtractedFrame {
                     width,
                     height,
                     raw: Bytes::copy_from_slice(&frame[..len]),
+                    metadata,
+                })
+            }
+            FrameLayout::YuyvY8 {
+                width,
+                height,
+                frame_height,
+            } => {
+                let row_bytes = width as usize * 2;
+                let needed = frame_height as usize * row_bytes;
+                ensure!(
+                    frame.len() >= needed,
+                    "short YUYV frame: {} bytes, need {}",
+                    frame.len(),
+                    needed
+                );
+                let mut raw = Vec::with_capacity(width as usize * height as usize * 2);
+                for y in 0..height as usize {
+                    let row = y * row_bytes;
+                    for x in 0..width as usize {
+                        let value = frame[row + x * 2] as u16;
+                        raw.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                Ok(ExtractedFrame {
+                    width,
+                    height,
+                    raw: Bytes::from(raw),
+                    metadata: None,
                 })
             }
             FrameLayout::UnknownRawU16 { width, height } => {
@@ -150,6 +222,7 @@ impl FrameLayout {
                     width,
                     height,
                     raw: Bytes::copy_from_slice(&frame[..len]),
+                    metadata: None,
                 })
             }
         }

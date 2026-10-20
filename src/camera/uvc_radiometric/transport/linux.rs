@@ -36,6 +36,9 @@ impl UvcTransport for LinuxV4l2Transport {
             (Some(w), Some(h)) => (w, h),
             _ => probe_default(&path).await?,
         };
+        if let Some(value) = config.raw_mode {
+            set_zoom_control(&path, value)?;
+        }
         let fps = config.fps.unwrap_or(25);
         let frame_bytes = (width as usize) * (height as usize) * 2;
         if frame_bytes == 0 {
@@ -118,6 +121,42 @@ impl UvcTransport for LinuxV4l2Transport {
             handle: Some(handle),
         }))
     }
+}
+
+/// HT301/T2S enter raw 16-bit mode through the UVC zoom control. This is the
+/// same vendor-specific trick used by `ht301_hacklib` (`CAP_PROP_ZOOM=0x8004`).
+fn set_zoom_control(path: &str, value: u32) -> Result<()> {
+    // V4L2_CID_ZOOM_ABSOLUTE and VIDIOC_S_CTRL for 64-bit Linux.
+    const V4L2_CID_ZOOM_ABSOLUTE: u32 = 0x0098_0917;
+    const VIDIOC_S_CTRL: libc::c_ulong = 0xC008_561C;
+
+    #[repr(C)]
+    struct V4l2Control {
+        id: u32,
+        value: i32,
+    }
+
+    let c_path = std::ffi::CString::new(path).context("V4L2 control path")?;
+    let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR) };
+    if fd < 0 {
+        bail!(
+            "open {path} for V4L2 control: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    let mut control = V4l2Control {
+        id: V4L2_CID_ZOOM_ABSOLUTE,
+        value: value as i32,
+    };
+    let rc = unsafe { libc::ioctl(fd, VIDIOC_S_CTRL, &mut control) };
+    let err = std::io::Error::last_os_error();
+    unsafe {
+        libc::close(fd);
+    }
+    if rc < 0 {
+        bail!("set V4L2 zoom control on {path}: {err}");
+    }
+    Ok(())
 }
 
 struct FfmpegStream {

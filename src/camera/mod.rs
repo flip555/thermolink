@@ -132,6 +132,21 @@ pub enum Confidence {
     Unknown,
 }
 
+/// Hardware-validation state. This is deliberately separate from `confidence`
+/// (how good the public evidence is) and `tested` (real-device test by us).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Validation {
+    /// A real device was tested by this project.
+    HardwareValidated,
+    /// Ported from a public project; behavior is plausible but not tested here.
+    PortedUnvalidated,
+    /// We have no device or capture; someone needs to lend/buy one.
+    NeedsHardware,
+    /// The protocol/calibration needs more research before a device helps.
+    NeedsResearch,
+}
+
 /// Static profile identity shown by the API and UI.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct ProfileInfo {
@@ -142,6 +157,7 @@ pub struct ProfileInfo {
     /// Real-device validation by this project.
     pub tested: bool,
     pub confidence: Confidence,
+    pub validation: Validation,
     pub sources: &'static [&'static str],
     pub notes: &'static str,
 }

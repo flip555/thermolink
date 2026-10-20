@@ -83,7 +83,7 @@ packaging is not validated.
 |----|-----------|---------|---------|-------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full handshake, settings, reboot, discovery |
 | `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser + calibration; hardware validation pending |
-| `uvc_radiometric` | USB/UVC (Linux) | 256×192 | — | unified profiles; M1: TC001/P2 Pro + generic fallback; **untested** |
+| `uvc_radiometric` | USB/UVC (Linux) | 160×120–384×288 | — | unified profiles: TC001/P2 Pro/TC002C/HT301/T2S+/Mini2 + generic; **untested** |
 | `mock` | in-process | 160×120 | — | simulator for development and tests |
 
 The GUI **Camera → Driver** selector persists `camera.json` and hot-swaps the

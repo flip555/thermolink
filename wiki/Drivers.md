@@ -4,7 +4,7 @@
 |----|-----------|---------|---------|--------|
 | `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full |
 | `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser; hardware validation pending |
-| `uvc_radiometric` | USB/UVC (Linux) | 256×192 | — | unified profiles; M1: TC001/P2 Pro + generic fallback; **untested** |
+| `uvc_radiometric` | USB/UVC (Linux) | 160×120–384×288 | — | unified profiles: TC001/P2 Pro/TC002C/HT301/T2S+/Mini2 + generic; **untested** |
 | `mock` | in-process | 160×120 | — | simulator |
 
 A driver owns transport, framing, pixels and calibration. The server consumes

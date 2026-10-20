@@ -67,3 +67,27 @@ async fn unknown_device_falls_back_without_failing() {
     );
     assert!(!detection.selected.as_ref().unwrap().tested);
 }
+
+#[tokio::test]
+async fn ht301_fingerprint_selects_ht301() {
+    let transport = MockTransport::new(vec![device(0x1514, 0x0001, None)], vec![]);
+    let detection = detect(&CameraConfig::default(), &transport).await;
+    assert_eq!(detection.selected.as_ref().unwrap().profile_id, "ht301");
+}
+
+#[tokio::test]
+async fn xtherm_v2_fingerprint_selects_t2s() {
+    let transport = MockTransport::new(vec![device(0x04b4, 0x0100, None)], vec![]);
+    let detection = detect(&CameraConfig::default(), &transport).await;
+    assert_eq!(
+        detection.selected.as_ref().unwrap().profile_id,
+        "xtherm_t2s"
+    );
+}
+
+#[tokio::test]
+async fn hik_fingerprint_selects_hik_mini2() {
+    let transport = MockTransport::new(vec![device(0x2bdf, 0x0102, None)], vec![]);
+    let detection = detect(&CameraConfig::default(), &transport).await;
+    assert_eq!(detection.selected.as_ref().unwrap().profile_id, "hik_mini2");
+}
