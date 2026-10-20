@@ -17,6 +17,10 @@
 
 ## Unreleased — desktop shell
 
+- Visible path: probe WebCodecs with the SPS-derived configuration after
+  SPS/PPS, buffer the first keyframe, add `?video=webcodecs|mjpeg|auto`
+  (keeping `?mjpeg=1`), and expose `/api/video/capabilities` with the cached
+  FFmpeg source and visible-stream availability.
 - Phase 4A: shared `src/runtime.rs` for `thermolink serve` and the desktop
   shell. `RunningServer` exposes the bound address, graceful shutdown and a
   join handle; the camera supervisor and TLS/HTTPS setup moved out of

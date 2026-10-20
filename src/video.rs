@@ -5,9 +5,10 @@
 //! can never back-pressure the camera. If ffmpeg exits, the supervisor restarts
 //! it with backoff and the health endpoint reports the truth.
 
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
+use std::process::{Command as StdCommand, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -17,6 +18,84 @@ use tokio::sync::watch;
 
 use crate::camera::FramePayload;
 use crate::stream::FrameHub;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FfmpegSource {
+    Bundled,
+    Env,
+    Path,
+    None,
+}
+
+impl FfmpegSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bundled => "bundled",
+            Self::Env => "env",
+            Self::Path => "path",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FfmpegInfo {
+    pub path: Option<PathBuf>,
+    pub source: FfmpegSource,
+    pub working: bool,
+}
+
+static FFMPEG_INFO: OnceLock<FfmpegInfo> = OnceLock::new();
+
+fn classify_ffmpeg(env_path: Option<PathBuf>, bundled: bool) -> (Option<PathBuf>, FfmpegSource) {
+    match env_path {
+        Some(path) => {
+            let source = if bundled {
+                FfmpegSource::Bundled
+            } else {
+                FfmpegSource::Env
+            };
+            (Some(path), source)
+        }
+        None => (Some(PathBuf::from("ffmpeg")), FfmpegSource::Path),
+    }
+}
+
+fn ffmpeg_works(path: &Path) -> bool {
+    let mut cmd = StdCommand::new(path);
+    cmd.arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Resolve the server-side FFmpeg once per process.
+///
+/// The first call performs the `--version` check; capability requests reuse the
+/// cached result and never spawn a process.
+pub fn ffmpeg_info() -> &'static FfmpegInfo {
+    FFMPEG_INFO.get_or_init(|| {
+        let env_path = std::env::var_os("THERMOLINK_FFMPEG")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from);
+        let bundled = std::env::var_os("THERMOLINK_FFMPEG_BUNDLED").is_some();
+        let (path, mut source) = classify_ffmpeg(env_path, bundled);
+        let working = path.as_ref().map(|p| ffmpeg_works(p)).unwrap_or(false);
+        if source == FfmpegSource::Path && !working {
+            source = FfmpegSource::None;
+        }
+        FfmpegInfo {
+            path,
+            source,
+            working,
+        }
+    })
+}
 
 #[derive(Clone)]
 pub struct VideoTranscoder {
@@ -95,8 +174,10 @@ async fn run_once(
     alive: &Arc<AtomicBool>,
     error: &Arc<Mutex<Option<String>>>,
 ) -> Result<(), String> {
-    let ffmpeg =
-        std::env::var_os("THERMOLINK_FFMPEG").unwrap_or_else(|| std::ffi::OsString::from("ffmpeg"));
+    let ffmpeg = ffmpeg_info()
+        .path
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"));
     let mut command = Command::new(&ffmpeg);
     #[cfg(windows)]
     {
@@ -245,4 +326,32 @@ fn set_error(slot: &Arc<Mutex<Option<String>>>, text: &str) {
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+#[cfg(test)]
+mod ffmpeg_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_bundled_environment() {
+        let (path, source) = classify_ffmpeg(Some(PathBuf::from("/app/ffmpeg")), true);
+        assert_eq!(path.as_deref(), Some(Path::new("/app/ffmpeg")));
+        assert_eq!(source, FfmpegSource::Bundled);
+        assert_eq!(source.as_str(), "bundled");
+    }
+
+    #[test]
+    fn classifies_explicit_environment() {
+        let (_, source) = classify_ffmpeg(Some(PathBuf::from("/usr/bin/ffmpeg")), false);
+        assert_eq!(source, FfmpegSource::Env);
+        assert_eq!(source.as_str(), "env");
+    }
+
+    #[test]
+    fn classifies_path_lookup() {
+        let (path, source) = classify_ffmpeg(None, false);
+        assert_eq!(path.as_deref(), Some(Path::new("ffmpeg")));
+        assert_eq!(source, FfmpegSource::Path);
+        assert_eq!(source.as_str(), "path");
+    }
 }

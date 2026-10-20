@@ -45,6 +45,7 @@ Public paths: `/`, `/i18n/*`, `/api/health`, `/api/version`, `/api/whoami`,
 | GET | `/api/video.jpg` | one visible JPEG (ffmpeg) |
 | GET | `/api/video.mjpg` | visible MJPEG stream |
 | GET | `/api/raw.h264` | live Annex-B H.264 for WebCodecs |
+| GET | `/api/video/capabilities` | WebCodecs/FFmpeg path and visible-stream availability |
 | GET | `/api/dt.jpg` / `.json` / `.mjpg` | difference against the reference |
 | GET | `/api/compare.jpg` / `.json` | current vs one reference, or `a`/`b` |
 | GET | `/api/reanalyze.jpg` / `.json` | re-render a snapshot with overrides |
@@ -117,6 +118,23 @@ Public paths: `/`, `/i18n/*`, `/api/health`, `/api/version`, `/api/whoami`,
 | POST | `/api/update` | install update |
 | POST | `/api/restart` | in-place restart |
 | GET | `/api/health` / `/api/version` | liveness / build |
+
+`/api/video/capabilities` returns the server-side decode source and whether the
+active camera can provide each visible path:
+
+```json
+{
+  "server_decode": "bundled",
+  "server_decode_working": true,
+  "raw_h264": true,
+  "mjpeg": true
+}
+```
+
+`server_decode` is `bundled`, `env`, `path` or `none`; it never includes an
+absolute filesystem path. `raw_h264` and `mjpeg` are false when the active
+camera has no visible stream, even if FFmpeg is available. The endpoint requires
+the normal authenticated API access.
 | GET | `/i18n/{lang}.json` | translations (public) |
 
 ## Examples
