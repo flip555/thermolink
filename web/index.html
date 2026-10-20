@@ -25,6 +25,11 @@
   .seg{display:flex;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px;margin-left:6px}
   .seg button{border:0;background:transparent;padding:5px 9px;font-size:12px;border-radius:6px;color:#9aa4b2}
   .seg button.active{background:var(--accent);color:#fff}
+  .quick{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px 8px;height:36px}
+  .quick label{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);white-space:nowrap}
+  .quick input[type=checkbox]{width:auto;margin:0}
+  .quick input[type=range]{width:78px;padding:0;accent-color:var(--accent)}
+  .quick b{color:var(--text);font:11px ui-monospace,Menlo,monospace;min-width:32px;text-align:right}
   .spacer{margin-left:auto}
   .shell{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:12px;padding:12px;height:calc(100dvh - 52px)}
   .stagecol{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
@@ -119,6 +124,8 @@
   .authcard h1{font-size:17px;margin:0}
   .authcard .err{color:var(--err);font-size:12px;min-height:16px}
   @media (max-width:1000px){
+    .quick .lbl{display:none}
+    .quick input[type=range]{width:56px}
     body{overflow:auto}
     .shell{grid-template-columns:1fr;height:auto}
     .viewer{aspect-ratio:4/3;flex:none}
@@ -140,6 +147,10 @@
     <button data-mode="wipe" data-i18n="mode.wipe">Wipe</button>
     <button data-mode="pip" data-i18n="mode.pip">PiP</button>
     <button data-mode="fusion" data-i18n="mode.fusion">Fusion</button>
+  </div>
+  <div class="quick" id="quickBar">
+    <label id="dtQuickWrap" title="Show ΔT reference image"><input type="checkbox" id="dtQuick"><span class="lbl">ΔT ref</span></label>
+    <label title="Thermal opacity"><span class="lbl">Thermal</span><input type="range" id="fuseQuick" min="0" max="100" step="1"><b id="fuseQuickVal">55%</b></label>
   </div>
   <div class="spacer"></div>
   <select id="lang" title="Language" data-i18n-title="label.language"></select>
@@ -531,7 +542,7 @@ function applyGuestUi() {
   }
   if (!can("reference")) {
     for (const id of ["refName","refSave","refClearAll","refList","setRef","clearRef",
-                      "dtSpan","cmpA","cmpB","cmpLink","dtToggle","dtStats"]) hide(id);
+                      "dtSpan","cmpA","cmpB","cmpLink","dtToggle","dtQuickWrap","dtStats"]) hide(id);
   }
   if (!can("calibration")) {
     for (const id of ["calScale","calOffset","calApply","calFactory","calState"]) hide(id);
@@ -716,7 +727,7 @@ function applyWipe() {
 function setMode(mode, persist = true) {
   state.mode = mode;
   if (state.dt && (mode === "pip" || mode === "fusion")) {
-    state.dt = false; save("dt", "0"); $("dtToggle").checked = false;
+    setDt(false);
   }
   if (persist) save("mode", mode);
   for (const b of $("modes").children) b.classList.toggle("active", b.dataset.mode === mode);
@@ -1410,7 +1421,17 @@ if ($("reExit")) $("reExit").onclick = exitReanalysis;
 
 $("setRef").onclick = async () => { const r=await fetch("/api/reference",{method:"POST"}); $("dtStats").innerHTML=r.ok?"<span>ΔT</span><span>reference set</span>":"<span>ΔT</span><span>error</span>"; };
 $("clearRef").onclick = async () => { await fetch("/api/reference",{method:"DELETE"}); $("dtStats").innerHTML="<span>ΔT</span><span>no reference</span>"; };
-$("dtToggle").onchange = (e) => { state.dt = e.target.checked; save("dt", state.dt ? "1" : "0"); applyWipe(); if (state.dt) refreshDt(); };
+function setDt(on) {
+  state.dt = !!on;
+  save("dt", state.dt ? "1" : "0");
+  $("dtToggle").checked = state.dt;
+  $("dtQuick").checked = state.dt;
+  $("dtQuick").disabled = $("dtToggle").disabled;
+  applyWipe();
+  if (state.dt) refreshDt();
+}
+$("dtToggle").onchange = (e) => setDt(e.target.checked);
+$("dtQuick").onchange = (e) => setDt(e.target.checked);
 async function refreshDt() {
   if (!state.dt) return;
   $("dtimg").src = withToken("/api/dt.jpg?t=" + Date.now());
@@ -1672,9 +1693,11 @@ async function poll() {
     if (d.align) applyAlign(d.align);
     if (d.has_reference === false) {
       $("dtToggle").disabled = true;
-      if (state.dt) { state.dt = false; save("dt", "0"); $("dtToggle").checked = false; applyWipe(); }
+      $("dtQuick").disabled = true;
+      if (state.dt) setDt(false);
     } else {
       $("dtToggle").disabled = false;
+      $("dtQuick").disabled = false;
     }
     if (ready && !state.feedStarted) { state.feedStarted = true; $("feed").src = withToken("/api/thermal.mjpg?t=" + Date.now()); }
     if (d.video && !state.visStarted && !state.codecActive) { state.visStarted = true; $("vis").src = withToken("/api/video.mjpg?t=" + Date.now()); }
@@ -1714,10 +1737,19 @@ loadLang(LANG);
 initAuth();
 $("unit").textContent = "°" + state.unit;
 const fuse = saved("fuse", "55");
-$("fuse").value = fuse;
-$("viewer").style.setProperty("--fuse", Number(fuse) / 100);
-$("fuse").oninput = (e) => { $("viewer").style.setProperty("--fuse", Number(e.target.value) / 100); save("fuse", e.target.value); };
+function setFuse(value) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  $("fuse").value = v;
+  $("fuseQuick").value = v;
+  $("fuseQuickVal").textContent = v + "%";
+  $("viewer").style.setProperty("--fuse", v / 100);
+  save("fuse", String(v));
+}
+setFuse(fuse);
+$("fuse").oninput = (e) => setFuse(e.target.value);
+$("fuseQuick").oninput = (e) => setFuse(e.target.value);
 $("dtToggle").checked = state.dt;
+$("dtQuick").checked = state.dt;
 setMode(state.mode, false);
 setTab(saved("tab", "display"), false);
 applyWipe();
