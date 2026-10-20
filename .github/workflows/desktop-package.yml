@@ -7,6 +7,10 @@ on:
       - feat/desktop-runtime
     paths:
       - .github/workflows/desktop-package.yml
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - desktop/**
 
 permissions:
   contents: read
