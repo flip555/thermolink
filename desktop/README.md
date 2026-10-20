@@ -34,6 +34,10 @@ npm run tauri build
 The bundle uses the repository's `web/` directory as `frontendDist`; the window
 loads the in-process server, so the UI is not duplicated.
 
+The release workflow builds unsigned bundles on Linux, macOS and Windows and
+uploads them as workflow artifacts. Attaching them to the GitHub release and
+code signing are follow-ups.
+
 ## Current scope
 
 - Localhost only. Network sharing is a later opt-in feature.

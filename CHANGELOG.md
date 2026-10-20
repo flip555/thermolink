@@ -11,8 +11,10 @@
   shuts the server down on exit.
 - CI: added a Linux `desktop` job that installs WebKitGTK/GTK dependencies and
   runs `cargo check`/`clippy` for `thermolink-desktop`.
-- Desktop packaging and the Windows/macOS bundle matrix are not wired yet.
-  macOS/Windows are unvalidated; Linux is the reference platform.
+- The release workflow now builds unsigned desktop bundles on Linux, macOS and
+  Windows and uploads them as workflow artifacts. Attaching those bundles to
+  the GitHub release and code signing remain follow-ups; macOS/Windows are
+  unvalidated, and Linux is the reference platform.
 
 ## Unreleased — 0.5.0 (M1)
 
