@@ -97,7 +97,14 @@ async fn run_once(
 ) -> Result<(), String> {
     let ffmpeg =
         std::env::var_os("THERMOLINK_FFMPEG").unwrap_or_else(|| std::ffi::OsString::from("ffmpeg"));
-    let mut child = Command::new(&ffmpeg)
+    let mut command = Command::new(&ffmpeg);
+    #[cfg(windows)]
+    {
+        // A GUI process spawning ffmpeg would otherwise leave a blank console
+        // window titled "ffmpeg" on Windows.
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command
         .args([
             "-hide_banner",
             "-loglevel",
