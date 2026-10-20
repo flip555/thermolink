@@ -23,6 +23,7 @@ fn init_logging() {
 
 fn main() {
     init_logging();
+    std::env::set_var("THERMOLINK_DESKTOP", "1");
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;

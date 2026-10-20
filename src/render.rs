@@ -63,6 +63,57 @@ pub fn builtin_iso_profiles() -> BTreeMap<String, Vec<IsoBand>> {
             })
             .collect(),
     );
+    let bands = |spec: &[(f32, f32, &str)]| {
+        spec.iter()
+            .map(|(lo, hi, colour)| IsoBand {
+                lo: *lo,
+                hi: *hi,
+                colour: (*colour).into(),
+            })
+            .collect::<Vec<_>>()
+    };
+    out.insert(
+        "body 30-40".to_string(),
+        bands(&[
+            (30.0, 32.0, "#1f6feb"),
+            (32.0, 34.0, "#16c4c4"),
+            (34.0, 36.0, "#7fd6b0"),
+            (36.0, 38.0, "#ffe14d"),
+            (38.0, 40.0, "#ff3b30"),
+        ]),
+    );
+    out.insert(
+        "electronics 20-80".to_string(),
+        bands(&[
+            (20.0, 30.0, "#1f6feb"),
+            (30.0, 40.0, "#16c4c4"),
+            (40.0, 50.0, "#7fd6b0"),
+            (50.0, 60.0, "#ffe14d"),
+            (60.0, 70.0, "#ff9f1a"),
+            (70.0, 80.0, "#ff3b30"),
+        ]),
+    );
+    out.insert(
+        "building 5-35".to_string(),
+        bands(&[
+            (5.0, 10.0, "#1f6feb"),
+            (10.0, 15.0, "#16c4c4"),
+            (15.0, 20.0, "#7fd6b0"),
+            (20.0, 25.0, "#ffe14d"),
+            (25.0, 30.0, "#ff9f1a"),
+            (30.0, 35.0, "#ff3b30"),
+        ]),
+    );
+    out.insert(
+        "fire 100-600".to_string(),
+        bands(&[
+            (100.0, 200.0, "#ffe14d"),
+            (200.0, 300.0, "#ffc247"),
+            (300.0, 400.0, "#ff9f1a"),
+            (400.0, 500.0, "#ff5e3a"),
+            (500.0, 600.0, "#ff3b30"),
+        ]),
+    );
     out
 }
 

@@ -17,6 +17,13 @@
 
 ## Unreleased — desktop shell
 
+- Desktop recovery: reset the visible decoder/stream when leaving re-analysis,
+  retry a blank/failed visible path on focus or after the first frame timeout,
+  and add quick isotherm presets (`body 30-40`, `electronics 20-80`,
+  `building 5-35`, `fire 100-600`).
+- Build/update metadata: expose the short Git SHA in `/api/version` and the
+  Build field, and hide update controls in desktop builds where the updater is
+  not supported.
 - Camera UI: replace the unsupported Qianli `prompt()` with a real camera-IP
   field, so macOS WKWebView can switch back to Qianli; convert the history
   chart and peak labels to the selected °C/°F unit.
