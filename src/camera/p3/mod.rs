@@ -186,7 +186,7 @@ impl CameraDriver for P3Driver {
             .set_alt_setting(1)
             .await
             .map_err(|e| anyhow::anyhow!("enable P3 streaming alt setting: {e}"))?;
-        device
+        iface1
             .control_out(
                 ControlOut {
                     control_type: ControlType::Vendor,

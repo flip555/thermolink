@@ -103,7 +103,17 @@ Auth accepts, in order:
 Sessions are Argon2-backed accounts with admin/guest roles and persisted in
 `sessions.json`; guest permissions are per capability.
 
-## 6. Persistence
+## 6. Desktop shell
+
+`src/runtime.rs` is the shared startup path for `thermolink serve` and the Tauri
+2 shell in `desktop/src-tauri/`. It builds the driver, FrameHub, `AppState`,
+supervisor and HTTP listener and returns `RunningServer { addr, shutdown, wait }`.
+The desktop app binds `127.0.0.1:0`, opens a webview at the returned address, and
+shuts the server down on exit. `serve` keeps the headless defaults
+(`0.0.0.0:8099`, TLS on 8443). Localhost is the desktop default; network sharing
+is a later opt-in.
+
+## 7. Persistence
 
 All state is JSON in `--data-dir`: auth, sessions, calibration, display, align,
 regions, alarms, references, isotherm profiles, camera selection, prerecord
