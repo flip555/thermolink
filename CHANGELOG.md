@@ -17,6 +17,8 @@
 
 ## Unreleased — desktop shell
 
+- Header quick controls: add a prominent ΔT-reference toggle and thermal
+  opacity slider, kept in sync with the full Measure/Display controls.
 - Desktop recovery: reset the visible decoder/stream when leaving re-analysis,
   retry a blank/failed visible path on focus or after the first frame timeout,
   and add quick isotherm presets (`body 30-40`, `electronics 20-80`,
