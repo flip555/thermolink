@@ -1,169 +1,85 @@
 # ThermoLink
 
-One web UI for thermal cameras, with the camera itself behind a driver boundary.
+**One browser UI for thermal cameras — live thermal and visible video, measurement, alarms and recording.**
 
-ThermoLink is the Rust port of [`qianli-supercam`](https://github.com/flip555/qianli-supercam).
-The Python project proved the protocol and the interface; ThermoLink keeps the
-features and removes the coupling — the web server never learns a camera's
-resolution, packet layout, or network dialect. It asks a driver for a
-`CameraSpec` and consumes `CameraFrame`s.
+![Thermal view](docs/screenshots/thermal.png)
 
-**Status:** the single-camera relay is feature-complete: live thermal and visible
-feeds, measurement, alarms, snapshots, pre-record, roles, HTTPS, i18n, and
-runtime driver hot-swap. A Tauri 2 desktop shell is available for Linux, macOS
-and Windows; the builds are currently unsigned (macOS notarization and Windows
-code signing are pending). A P3/P1 USB driver uses `nusb`; hardware validation
-is still pending. The unified UVC radiometric family now includes
-`topdon_tc001`, `infiray_p2pro`, `topdon_tc002c`, `ht301`, `xtherm_t2s`,
-`hik_mini2` and an uncalibrated `uvc_generic` fallback; these are **not
-hardware-validated yet**.
+ThermoLink is a Rust relay with a driver boundary: the web server never learns a
+camera’s resolution, packet layout or network dialect. Drivers expose a
+`CameraSpec`; the UI adapts to what the camera can actually do.
 
-## Download and run
+## Download
 
-Prebuilt desktop apps and the Linux CLI are published on the
-[GitHub releases page](https://github.com/flip555/thermolink/releases). Each
-release includes SHA-256 checksums.
-
-Current signing status:
-
-- **macOS:** ad-hoc signed, not notarized. First launch: right-click → **Open**,
-  or **System Settings → Privacy & Security → Open Anyway**.
-- **Windows:** unsigned. SmartScreen: **More info → Run anyway**.
-- **Linux:** `.deb` or `chmod +x` the `.AppImage`; verify the checksum.
-
-See [Installing and running](docs/INSTALL.md) for the full per-platform steps,
-checksum verification, data directories and UVC testing.
-
-## A look at it
-
-| Thermal | Fusion (70% thermal) | Wipe |
+| Platform | Install | First run |
 |---|---|---|
-| ![Thermal](docs/screenshots/thermal.png) | ![Fusion](docs/screenshots/fusion.png) | ![Wipe](docs/screenshots/wipe.png) |
+| **Windows** | [Installer (.exe)](https://github.com/flip555/thermolink/releases/download/v0.4.1/ThermoLink_0.4.1_x64-setup.exe) · [MSI](https://github.com/flip555/thermolink/releases/download/v0.4.1/ThermoLink_0.4.1_x64_en-US.msi) | **Unsigned** — SmartScreen: **More info → Run anyway** |
+| **macOS** | [Apple Silicon app (.zip)](https://github.com/flip555/thermolink/releases/download/v0.4.1/ThermoLink-macos-aarch64-apple-darwin.zip) | **Unsigned/not notarized** — right-click **Open**, or **System Settings → Privacy & Security → Open Anyway** |
+| **Linux** | [AppImage](https://github.com/flip555/thermolink/releases/download/v0.4.1/ThermoLink_0.4.1_amd64.AppImage) · [.deb](https://github.com/flip555/thermolink/releases/download/v0.4.1/ThermoLink_0.4.1_amd64.deb) | `chmod +x` the AppImage, or `apt install ./ThermoLink_*.deb` |
+| **Server / CLI** | [Linux tarballs](https://github.com/flip555/thermolink/releases/download/v0.4.1/thermolink-x86_64-unknown-linux-gnu.tar.gz) | See [server installation](https://github.com/flip555/thermolink/wiki/Installation) |
+
+> **Unsigned builds:** macOS notarization and Windows code signing are pending
+> (Apple Developer Program / OV certificate). Verify the release
+> `SHA256SUMS-*.txt` before running. Full per-platform steps:
+> [Installing and running](docs/INSTALL.md).
 
 ## Features
 
-- **Thermal:** palette rendering, clip/span bands, isotherm bands + profiles,
-  hot/cold peaks, temperature history, point/box/polygon measurement, ΔT against
-  a reference, A/B reference comparison.
-- **Visible:** H.264 Annex-B → WebCodecs in the browser over HTTPS, with MJPEG
-  transcoding as the fallback; Visible, Wipe, PiP and Fusion modes.
-- **Drivers:** Qianli SuperCam over TCP, simulated source, P3/P1 USB (nusb;
-  hardware validation pending), and the UVC radiometric family (TC001/P2
-  Pro/TC002C/HT301/T2S+/Mini2 + generic; all UVC profiles are experimental).
-  Drivers advertise capabilities; the GUI hides controls a camera cannot use,
-  and drivers can be switched at runtime.
-- **Operations:** snapshots (JPEG/raw/JSON + saved visible frame), pre-record
-  ring buffer, per-clip ZIPs, alarm events, CSV exports, self-update/restart,
-  health/uptime.
-- **Re-analysis:** snapshots open as a stored view in the main window — thermal
-  re-rendered with current palette/bands, saved visible frame, stored peaks and
-  regions, with Wipe/PiP/Fusion/alignment still active; Exit returns to live.
-- **Access:** Argon2 account, admin/guest roles with per-capability permissions,
-  persisted sessions, Bearer and query tokens, self-signed HTTPS on `:8443`.
-- **UI:** nine languages, RTL Arabic, fullscreen, responsive layout.
+- **Thermal:** palettes, clip/span, isotherm bands and profiles, hot/cold peaks,
+  history, point/box/polygon measurement, ΔT references and A/B comparison.
+- **Visible:** WebCodecs H.264 in the browser with an MJPEG fallback; Visible,
+  Wipe, PiP and Fusion modes.
+- **Operations:** snapshots, pre-record, clip ZIPs, alarms, CSV export,
+  re-analysis, health and restart.
+- **Access:** admin/guest roles, persisted sessions, HTTPS and nine UI languages.
+- **Desktop:** Tauri shell for Windows, macOS and Linux; same UI, localhost
+  server and bundled FFmpeg.
 
-## Quick start
+## Cameras
 
-```bash
-cargo build --release
+| Driver | Transport | Status |
+|---|---|---|
+| `qianli` | TCP 3001/3000 | **Validated** — full handshake, settings, reboot, discovery |
+| `p3` / `p1` | USB | Experimental — `nusb` transport and parser; hardware validation pending |
+| `uvc_radiometric` | USB/UVC (Linux) | Experimental — TC001/P2 Pro/TC002C/HT301/T2S+/Mini2 + generic fallback |
+| `mock` | In-process | Simulator for development and tests |
 
-# run the whole app against the simulator — no camera required
-./target/release/thermolink serve --demo --bind 0.0.0.0:8099
+The exact profile list and validation flags live in
+[`src/camera/`](src/camera/) and [DRIVERS.md](docs/DRIVERS.md). The UI only shows
+controls a driver advertises.
 
-# real Qianli camera
-RUST_LOG=thermolink=info ./target/release/thermolink serve \
-  --host 192.168.1.64 --bind 0.0.0.0:8099
+## Run
 
-# inspect a camera without starting the server
-./target/release/thermolink probe --host 192.168.1.64
-```
+**Desktop:** install from the table above, create the admin account, then choose
+**Camera → Driver**.
 
-Open `http://<host>:8099` (HTTP) or `https://<host>:8443` (self-signed TLS,
-generated on first start). The first visitor creates the admin account.
+**Server / CLI:** see the [installation wiki](https://github.com/flip555/thermolink/wiki/Installation)
+for setup, systemd, TLS, USB udev rules and camera networking.
 
-`serve` flags: `--driver`, `--host`, `--control-port`, `--media-port`, `--bind`,
-`--profile`, `--demo`, `--data-dir`.
-
-## Desktop (Tauri 2)
-
-The desktop shell uses the same runtime and the same web UI. Prebuilt apps are
-on the releases page; the current macOS build is ad-hoc/unsigned and the
-Windows build is unsigned, so use the platform warnings in
-[docs/INSTALL.md](docs/INSTALL.md). The app binds `127.0.0.1:0`, starts the
-in-process server, and bundles the LGPL FFmpeg binary used for the visible
-stream. `thermolink serve` remains the headless mode. See
-[desktop/README.md](desktop/README.md) for build dependencies and current
-limitations.
-
-## Drivers
-
-| id | transport | thermal | visible | notes |
-|----|-----------|---------|---------|-------|
-| `qianli` | TCP 3001/3000 | 160×120 | 1920×1080 H.264 | full handshake, settings, reboot, discovery |
-| `p3` | USB | 256×192 / 160×120 | — | nusb transport + parser + calibration; hardware validation pending |
-| `uvc_radiometric` | USB/UVC (Linux) | 160×120–384×288 | — | unified profiles: TC001/P2 Pro/TC002C/HT301/T2S+/Mini2 + generic; **untested** |
-| `mock` | in-process | 160×120 | — | simulator for development and tests |
-
-The GUI **Camera → Driver** selector persists `camera.json` and hot-swaps the
-driver without restarting the relay. Capabilities are advertised in
-`/api/spec`; the UI hides modes and controls that do not apply.
-
-For the UVC family, choose a profile or let auto-detect fill it:
+Development simulator:
 
 ```bash
-./target/release/thermolink probe --driver uvc_radiometric --profile topdon_tc001
-./target/release/thermolink serve --driver uvc_radiometric --profile topdon_tc001
+cargo run --release -- serve --demo --bind 0.0.0.0:8099
 ```
 
-`0bda:5830` is shared by several models; auto-detect reports the ambiguity and
-never silently claims a specific camera. Use `--profile` or the UI selector to
-force one. Unknown devices fall back to `uvc_generic`, which streams raw data
-with temperature measurement disabled.
-
-## Data directory
-
-Everything stateful lives in `--data-dir` (default `thermolink-data/`):
-
-```
-auth.json  sessions.json  calibration.json  display.json  align.json
-regions.json  alarms.json  references.json  reference-active.json
-isotherm.json  camera.json  prerecord.json  notifications.json
-snapshots/  captures/  tls-cert.pem  tls-key.pem
-```
-
-Back up the directory to preserve accounts, measurements, references and
-recordings. Sessions are persisted, so a relay restart does not sign you out.
+Open `http://localhost:8099`.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Installing and running](docs/INSTALL.md)
-- [Drivers and capabilities](docs/DRIVERS.md)
+- [Wiki](https://github.com/flip555/thermolink/wiki) — installation, setup, drivers, UI
+- [Installing and running](docs/INSTALL.md) — desktop and CLI, checksums, unsigned warnings
+- [Drivers](docs/DRIVERS.md) — capabilities and profile status
 - [HTTP API](docs/API.md)
-- [Security](docs/SECURITY.md)
-- [Deployment](docs/DEPLOYMENT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security](docs/SECURITY.md) — self-signed HTTPS and exposure guidance
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Qianli protocol notes](docs/PROTOCOL.md)
 
-A ready-to-publish GitHub wiki lives in [`wiki/`](wiki/Home.md).
+## Screenshots
 
-## Security notes
+| Thermal | Fusion | Wipe |
+|---|---|---|
+| ![Thermal](docs/screenshots/thermal.png) | ![Fusion](docs/screenshots/fusion.png) | ![Wipe](docs/screenshots/wipe.png) |
 
-HTTPS uses a self-signed certificate; the browser warning is expected. The
-session cookie is deliberately **not** marked `Secure` while the certificate is
-self-signed (some browsers drop it on cert-error origins); the page also stores
-the session token and sends it as `Authorization: Bearer`. See
-[Security](docs/SECURITY.md) before exposing the relay to an untrusted network.
-
-## Tests
-
-```bash
-cargo test --release --lib
-```
-
-The suite covers the Qianli protocol/thermal extraction, render paths, auth,
-persistence, update logic, the P3 frame parser, and server helpers. The Qianli
-integration test needs a local mock handshake server and runs in the same suite.
+More views: [wiki screenshots](https://github.com/flip555/thermolink/wiki/Screenshots).
 
 ## License
 

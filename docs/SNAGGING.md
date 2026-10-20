@@ -4,11 +4,12 @@ Last updated: 2026-10-20
 
 ## Open
 
-- [ ] **Desktop re-analysis locks the visible feed**
+- [ ] **Re-analysis locks the visible feed — desktop and browser**
   - Repro: open a snapshot, Exit, then open a second snapshot before the live
     video feed has recovered.
   - Windows: the visible video stays frozen.
   - macOS: the visible video freezes and the Snapshot action stops responding.
+  - Browser: the visible video locks in the same way.
   - Deferred for now; needs a reset/serialization fix around re-analysis entry
     and visible-stream recovery.
 
