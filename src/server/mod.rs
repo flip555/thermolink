@@ -1349,6 +1349,7 @@ async fn drivers(State(st): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "profiles": profiles,
         "current": runtime.driver.id(),
         "current_profile": runtime.spec.profile.map(|p| p.id),
+        "host": st.camera_host,
     }))
 }
 
