@@ -10,10 +10,29 @@ resolution, packet layout, or network dialect. It asks a driver for a
 
 **Status:** the single-camera relay is feature-complete: live thermal and visible
 feeds, measurement, alarms, snapshots, pre-record, roles, HTTPS, i18n, and
-runtime driver hot-swap. A P3/P1 USB driver uses `nusb` for transport, with the
-protocol and calibration ported; hardware validation is still pending. A unified
-UVC radiometric family (M1) adds `topdon_tc001`, `infiray_p2pro` and an
-uncalibrated `uvc_generic` fallback; these are **not hardware-validated yet**.
+runtime driver hot-swap. A Tauri 2 desktop shell is available for Linux, macOS
+and Windows; the builds are currently unsigned (macOS notarization and Windows
+code signing are pending). A P3/P1 USB driver uses `nusb`; hardware validation
+is still pending. The unified UVC radiometric family now includes
+`topdon_tc001`, `infiray_p2pro`, `topdon_tc002c`, `ht301`, `xtherm_t2s`,
+`hik_mini2` and an uncalibrated `uvc_generic` fallback; these are **not
+hardware-validated yet**.
+
+## Download and run
+
+Prebuilt desktop apps and the Linux CLI are published on the
+[GitHub releases page](https://github.com/flip555/thermolink/releases). Each
+release includes SHA-256 checksums.
+
+Current signing status:
+
+- **macOS:** ad-hoc signed, not notarized. First launch: right-click → **Open**,
+  or **System Settings → Privacy & Security → Open Anyway**.
+- **Windows:** unsigned. SmartScreen: **More info → Run anyway**.
+- **Linux:** `.deb` or `chmod +x` the `.AppImage`; verify the checksum.
+
+See [Installing and running](docs/INSTALL.md) for the full per-platform steps,
+checksum verification, data directories and UVC testing.
 
 ## A look at it
 
@@ -28,9 +47,11 @@ uncalibrated `uvc_generic` fallback; these are **not hardware-validated yet**.
   a reference, A/B reference comparison.
 - **Visible:** H.264 Annex-B → WebCodecs in the browser over HTTPS, with MJPEG
   transcoding as the fallback; Visible, Wipe, PiP and Fusion modes.
-- **Drivers:** Qianli SuperCam over TCP, simulated source, and an offline
-  P3/P1 USB driver entry (nusb; hardware validation pending). Drivers advertise capabilities; the GUI
-  hides controls a camera cannot use, and drivers can be switched at runtime.
+- **Drivers:** Qianli SuperCam over TCP, simulated source, P3/P1 USB (nusb;
+  hardware validation pending), and the UVC radiometric family (TC001/P2
+  Pro/TC002C/HT301/T2S+/Mini2 + generic; all UVC profiles are experimental).
+  Drivers advertise capabilities; the GUI hides controls a camera cannot use,
+  and drivers can be switched at runtime.
 - **Operations:** snapshots (JPEG/raw/JSON + saved visible frame), pre-record
   ring buffer, per-clip ZIPs, alarm events, CSV exports, self-update/restart,
   health/uptime.
@@ -65,17 +86,14 @@ generated on first start). The first visitor creates the admin account.
 
 ## Desktop (Tauri 2)
 
-The desktop shell uses the same runtime and the same web UI:
-
-```bash
-cargo run -p thermolink-desktop
-```
-
-It binds `127.0.0.1:0`, starts the in-process server, and loads the UI in a
-Tauri window. `thermolink serve` remains the headless mode. See
-[desktop/README.md](desktop/README.md) for Linux build dependencies and current
-limitations: localhost only, no desktop updater yet, and macOS/Windows
-packaging is not validated.
+The desktop shell uses the same runtime and the same web UI. Prebuilt apps are
+on the releases page; the current macOS build is ad-hoc/unsigned and the
+Windows build is unsigned, so use the platform warnings in
+[docs/INSTALL.md](docs/INSTALL.md). The app binds `127.0.0.1:0`, starts the
+in-process server, and bundles the LGPL FFmpeg binary used for the visible
+stream. `thermolink serve` remains the headless mode. See
+[desktop/README.md](desktop/README.md) for build dependencies and current
+limitations.
 
 ## Drivers
 
@@ -119,6 +137,7 @@ recordings. Sessions are persisted, so a relay restart does not sign you out.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Installing and running](docs/INSTALL.md)
 - [Drivers and capabilities](docs/DRIVERS.md)
 - [HTTP API](docs/API.md)
 - [Security](docs/SECURITY.md)

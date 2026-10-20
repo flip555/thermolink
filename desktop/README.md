@@ -34,9 +34,10 @@ npm run tauri build
 The bundle uses the repository's `web/` directory as `frontendDist`; the window
 loads the in-process server, so the UI is not duplicated.
 
-The release workflow builds unsigned bundles on Linux, macOS and Windows and
-uploads them as workflow artifacts. Attaching them to the GitHub release and
-code signing are follow-ups.
+The release workflow (on `v*` tags) builds unsigned bundles on Linux, macOS and
+Windows, attaches them to the GitHub release, and publishes SHA-256 checksums.
+macOS is ad-hoc signed and not notarized; Windows is unsigned. See
+[docs/INSTALL.md](../docs/INSTALL.md) for the user-facing install steps.
 
 ### macOS Local Network permission
 
@@ -84,6 +85,10 @@ redistributed.
 - Default driver is `uvc_radiometric`; `camera.json` in the platform app-data
   directory can select another driver/profile.
 - No in-app updater yet. The CLI updater remains for `thermolink serve`.
-- Linux is the reference platform. macOS/Windows packaging is not validated.
+- Linux, macOS and Windows builds pass CI; basic Qianli runtime has been tested
+  on all three. Code signing/notarization is still pending.
 - The bundled icon is a placeholder and should be replaced before a public
   release.
+
+Prebuilt downloads and the unsigned-build warnings are documented in
+[docs/INSTALL.md](../docs/INSTALL.md).

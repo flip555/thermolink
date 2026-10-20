@@ -11,6 +11,20 @@ hide vendor protocols; the server never imports a concrete driver.
 See the [screenshot gallery](Screenshots) for palettes, wipe, measurement,
 alarms, capture, re-analysis and ΔT.
 
+## Download and run
+
+Desktop apps and the Linux CLI are published on the
+[GitHub releases page](https://github.com/flip555/thermolink/releases), with
+SHA-256 checksums.
+
+- **macOS:** currently unsigned/not notarized. First launch: right-click
+  **Open**, or **System Settings → Privacy & Security → Open Anyway**.
+- **Windows:** currently unsigned. SmartScreen: **More info → Run anyway**.
+- **Linux:** install the `.deb`, or `chmod +x` the AppImage and run it.
+
+See [Installation](Installation) for per-platform steps, checksum verification
+and the bundled-FFmpeg details.
+
 ## Quick start
 
 ```bash
@@ -29,6 +43,9 @@ first admin account.
   Fusion.
 - Drivers: Qianli over TCP, simulated source, P3/P1 USB (nusb transport; hardware validation pending).
   Capabilities drive which UI controls appear; drivers hot-swap at runtime.
+- UVC: the radiometric family includes TC001/P2 Pro/TC002C/HT301/T2S+/Mini2
+  and a generic fallback. These profiles are experimental until a user reports
+  a working capture.
 - Operations: snapshots, pre-record, per-clip ZIPs, alarms/events, CSV exports,
   self-update/restart.
 - Access: admin/guest roles, persisted sessions, Bearer/cookie/query tokens,
@@ -37,8 +54,8 @@ first admin account.
 ## Wiki pages
 
 - [Installation](Installation)
-- [Configuration](Configuration)
 - [Drivers](Drivers)
+- [Configuration](Configuration)
 - [Using the view](Using-the-view)
 - [Architecture](Architecture)
 - [HTTP API](API)
