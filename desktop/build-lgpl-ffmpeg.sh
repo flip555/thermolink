@@ -50,6 +50,11 @@ make install
 cp -f "$OUT/bin/ffmpeg" "$OUT/ffmpeg"
 cp -f COPYING.LGPLv2.1 "$OUT/COPYING.LGPLv2.1"
 
+RES="$ROOT/desktop/src-tauri/resources"
+mkdir -p "$RES"
+cp -f "$OUT/ffmpeg" "$RES/ffmpeg"
+cp -f "$OUT/COPYING.LGPLv2.1" "$RES/COPYING.LGPLv2.1"
+
 "$OUT/ffmpeg" -version | head -3
 echo
 echo "LGPL FFmpeg ready: $OUT/ffmpeg"

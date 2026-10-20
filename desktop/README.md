@@ -69,6 +69,11 @@ into `desktop/vendor/ffmpeg` (ignored by git). The second builds the app, copies
 the binary and license into `Contents/Resources`, and signs the bundle ad-hoc.
 `thermolink` also honors `THERMOLINK_FFMPEG`.
 
+CI downloads prebuilt **LGPL** FFmpeg for Linux and Windows (BtbN builds) into
+`desktop/src-tauri/resources`, and builds it from source on macOS. Tauri bundles
+the `resources/*` directory, and the app resolves `ffmpeg` or `ffmpeg.exe` from
+the resource root or its `resources/` subdirectory.
+
 For distribution, use a Developer ID identity and notarization instead of
 ad-hoc signing. The GPL/nonfree `ffmpeg-static` test binary must not be
 redistributed.

@@ -1,6 +1,9 @@
 /target
 desktop/src-tauri/gen/
 desktop/vendor/
+desktop/src-tauri/resources/ffmpeg
+desktop/src-tauri/resources/ffmpeg.exe
+desktop/src-tauri/resources/FFMPEG-LICENSE.txt
 desktop/node_modules/
 *.h264
 *.raw

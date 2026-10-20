@@ -23,6 +23,10 @@
 - Added `desktop/build-lgpl-ffmpeg.sh` and `desktop/package-macos-dev.sh` to
   build and bundle an LGPL static FFmpeg reproducibly; the binary stays
   git-ignored, with its license copied into the app bundle.
+- Bundle LGPL FFmpeg on every desktop target: BtbN LGPL builds for Linux and
+  Windows in CI, source build for macOS. Tauri resources include `resources/*`
+  and the app resolves `ffmpeg`/`ffmpeg.exe` from the resource root or
+  `resources/` subdirectory.
 - Camera UI: Auto-detect is now explicitly UVC-only; Qianli users are pointed at
   Discover cameras.
 - The release workflow now builds unsigned desktop bundles on Linux, macOS and

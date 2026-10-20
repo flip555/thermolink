@@ -27,9 +27,16 @@ fn main() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             if let Ok(resource_dir) = app.path().resource_dir() {
-                let bundled = resource_dir.join("ffmpeg");
-                if bundled.is_file() {
-                    std::env::set_var("THERMOLINK_FFMPEG", bundled);
+                for bundled in [
+                    resource_dir.join("ffmpeg"),
+                    resource_dir.join("ffmpeg.exe"),
+                    resource_dir.join("resources").join("ffmpeg"),
+                    resource_dir.join("resources").join("ffmpeg.exe"),
+                ] {
+                    if bundled.is_file() {
+                        std::env::set_var("THERMOLINK_FFMPEG", bundled);
+                        break;
+                    }
                 }
             }
             let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
