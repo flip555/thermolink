@@ -1,0 +1,14 @@
+# cargo-audit configuration.
+#
+# The two advisories below are Linux-desktop-only transitive dependencies of the
+# Tauri GTK stack (gtk 0.18 / glib 0.18). They cannot be resolved without Tauri
+# moving to gtk-rs 0.19+, and they are not reachable from the server binary.
+# Keep them documented here so the scheduled audit keeps reporting real issues.
+
+[advisories]
+ignore = [
+    # proc-macro-error 1.0.4 is unmaintained (via glib-macros / gtk3-macros).
+    "RUSTSEC-2024-0370",
+    # glib 0.18.5 VariantStrIter unsoundness (via gtk 0.18).
+    "RUSTSEC-2024-0429",
+]
